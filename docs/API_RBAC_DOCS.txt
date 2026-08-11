@@ -1,0 +1,516 @@
+เอกสารการใช้งาน API: Role และ Permission
+==========================================
+
+Base URL
+--------
+http://localhost:8080
+
+รูปแบบข้อมูลที่รับและส่ง
+------------------------
+- Request body ใช้ Content-Type: application/json
+- Response body เป็น JSON ยกเว้นการลบสำเร็จ ซึ่งตอบกลับโดยไม่มี body
+- ID ของ Role และ Permission ต้องเป็น UUID
+
+
+1. การยืนยันตัวตนและการกำหนดสิทธิ์
+===================================
+
+API ในเอกสารนี้ใช้ session cookie ชื่อ:
+
+__Host-session
+
+ผู้เรียกต้อง login ก่อนด้วย endpoint:
+
+POST /api/auth/login
+
+Request body:
+
+{
+  "Username": "admin",
+  "Password": "your-password"
+}
+
+หมายเหตุ: ชื่อ property ไม่คำนึงถึงตัวพิมพ์เล็ก/ใหญ่ตามการแปลง JSON ของ Go
+แนะนำให้ส่งเป็น "Username" และ "Password" ตามตัวอย่าง
+
+เมื่อ login สำเร็จ server จะส่ง cookie __Host-session กลับมา ผู้เรียกต้องส่ง cookie นี้
+ไปกับ request ทุกครั้งที่เรียก /api/roles หรือ /api/permissions
+
+Cookie ถูกกำหนดเป็น Secure จึงถูกออกแบบให้ใช้งานผ่าน HTTPS ใน production
+หากทดสอบด้วย curl ให้เก็บและส่ง cookie ด้วยตัวเลือก -c และ -b ตามตัวอย่างด้านล่าง
+
+ตัวอย่าง login และบันทึก cookie:
+
+curl -i -c cookies.txt \
+  -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"Username":"admin","Password":"your-password"}'
+
+หมายเหตุสำหรับ PowerShell: คำสั่ง curl อาจถูก map เป็น Invoke-WebRequest ใน PowerShell รุ่นเก่า
+ให้ใช้ curl.exe แทน เช่น curl.exe -i -k -c cookies.txt ...
+
+การกำหนดสิทธิ์:
+
+- GET: ผู้ใช้ทุกคนที่ login และมี session ที่ยังใช้งานได้สามารถเรียกได้
+- POST, PUT และ DELETE: เรียกได้เฉพาะผู้ใช้ที่มี role_id เท่ากับ
+  be808ed9-e820-46a8-a0d9-b3d1dd2defa1
+- การตรวจ administrator ใช้ role_id โดยตรง ไม่ได้ตรวจจากชื่อ role
+- หากไม่มี session หรือ session หมดอายุ จะได้รับ HTTP 401
+- หาก login แล้วแต่ไม่ใช่ administrator จะได้รับ HTTP 403
+
+ตรวจสอบข้อมูลผู้ใช้ปัจจุบัน:
+
+GET /api/auth/me
+
+ตัวอย่าง response:
+
+{
+  "id": "user-uuid",
+  "username": "admin",
+  "email": "admin@example.com",
+  "display_name": "Administrator",
+  "role_id": "be808ed9-e820-46a8-a0d9-b3d1dd2defa1",
+  "role": "ADMINISTRATOR"
+}
+
+
+2. Role API
+===========
+
+Role ประกอบด้วยข้อมูลหลักดังนี้:
+
+- id: UUID ของ Role
+- name: ชื่อ Role ต้องไม่ว่าง ยาวไม่เกิน 50 ตัวอักษร และห้ามซ้ำ
+- description: รายละเอียด สามารถเป็น null ได้
+- permission_ids: รายการ UUID ของ Permission ที่ผูกกับ Role
+- permissions: รายการ code ของ Permission ที่ผูกกับ Role
+- created_at: วันเวลาที่สร้าง
+- updated_at: วันเวลาที่แก้ไขล่าสุด
+
+
+2.1 ดู Role ทั้งหมด
+-------------------
+
+GET /api/roles
+
+สิทธิ์: ผู้ใช้ที่ login แล้ว
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt http://localhost:8080/api/roles
+
+Response สำเร็จ: HTTP 200
+
+{
+  "roles": [
+    {
+      "id": "role-uuid",
+      "name": "OPERATOR",
+      "description": "สามารถควบคุม agent",
+      "permission_ids": ["permission-uuid"],
+      "permissions": ["agent.execute"],
+      "created_at": "2026-08-09T10:00:00Z",
+      "updated_at": "2026-08-09T10:00:00Z"
+    }
+  ]
+}
+
+หากไม่มี Role ระบบจะตอบกลับเป็น "roles": []
+
+
+2.2 ดู Role ตาม ID
+------------------
+
+GET /api/roles/:id
+
+สิทธิ์: ผู้ใช้ที่ login แล้ว
+
+Path parameter:
+
+- id: UUID ของ Role
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  http://localhost:8080/api/roles/11111111-1111-1111-1111-111111111111
+
+Response สำเร็จ: HTTP 200
+
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "name": "OPERATOR",
+  "description": "สามารถควบคุม agent",
+  "permission_ids": ["22222222-2222-2222-2222-222222222222"],
+  "permissions": ["agent.execute"],
+  "created_at": "2026-08-09T10:00:00Z",
+  "updated_at": "2026-08-09T10:00:00Z"
+}
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: id ไม่ใช่ UUID ที่ถูกต้อง
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 404: ไม่พบ Role
+
+
+2.3 สร้าง Role
+--------------
+
+POST /api/roles
+
+สิทธิ์: administrator เท่านั้น
+
+Request body:
+
+{
+  "name": "OPERATOR",
+  "description": "สามารถควบคุม agent",
+  "permission_ids": [
+    "22222222-2222-2222-2222-222222222222",
+    "33333333-3333-3333-3333-333333333333"
+  ]
+}
+
+รายละเอียด field:
+
+- name: จำเป็นต้องส่ง ห้ามเป็นข้อความว่าง และยาวไม่เกิน 50 ตัวอักษร
+- description: ไม่บังคับ หากไม่ต้องการรายละเอียดส่ง null หรือไม่ส่ง field นี้ได้
+- permission_ids: ไม่บังคับ ต้องเป็น array ของ Permission UUID ที่มีอยู่จริง
+- ส่ง permission_ids เป็น [] เพื่อสร้าง Role ที่ยังไม่มี Permission ได้
+- หากไม่ส่ง permission_ids ระบบจะสร้าง Role โดยไม่เพิ่มความสัมพันธ์กับ Permission
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  -X POST http://localhost:8080/api/roles \
+  -H "Content-Type: application/json" \
+  -d '{"name":"OPERATOR","description":"สามารถควบคุม agent","permission_ids":["22222222-2222-2222-2222-222222222222"]}'
+
+Response สำเร็จ: HTTP 201
+
+{
+  "message": "role created",
+  "id": "role-uuid-created-by-server"
+}
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: JSON ไม่ถูกต้อง, name ไม่ถูกต้อง, Permission ID ไม่ใช่ UUID หรือไม่พบ Permission
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 409: ชื่อ Role ซ้ำ
+
+การสร้าง Role และการผูก Permission ทำงานใน database transaction เดียวกัน
+หากขั้นตอนใดล้มเหลว จะไม่มีข้อมูล Role บางส่วนถูกบันทึกไว้
+
+
+2.4 แก้ไข Role และรายการ Permission
+-----------------------------------
+
+PUT /api/roles/:id
+
+สิทธิ์: administrator เท่านั้น
+
+Path parameter:
+
+- id: UUID ของ Role ที่ต้องการแก้ไข
+
+Request body:
+
+{
+  "name": "SENIOR_OPERATOR",
+  "description": "ควบคุมและตรวจสอบ agent",
+  "permission_ids": [
+    "22222222-2222-2222-2222-222222222222"
+  ]
+}
+
+พฤติกรรมของ permission_ids:
+
+- หากส่ง permission_ids ระบบจะแทนที่ Permission เดิมทั้งหมดด้วยรายการใหม่
+- หากส่ง permission_ids เป็น [] ระบบจะนำ Permission ทั้งหมดออกจาก Role
+- หากไม่ส่ง permission_ids ระบบจะคง Permission เดิมไว้
+- name เป็น field บังคับทุกครั้งที่เรียก PUT
+- หากต้องการล้าง description ให้ส่ง "description": null
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  -X PUT http://localhost:8080/api/roles/11111111-1111-1111-1111-111111111111 \
+  -H "Content-Type: application/json" \
+  -d '{"name":"SENIOR_OPERATOR","description":"ควบคุมและตรวจสอบ agent","permission_ids":[]}'
+
+Response สำเร็จ: HTTP 200
+
+{
+  "message": "role updated"
+}
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: id, JSON, name หรือ Permission ID ไม่ถูกต้อง หรือไม่พบ Permission บางรายการ
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 404: ไม่พบ Role
+- HTTP 409: ชื่อ Role ซ้ำ
+
+
+2.5 ลบ Role
+------------
+
+DELETE /api/roles/:id
+
+สิทธิ์: administrator เท่านั้น
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  -X DELETE http://localhost:8080/api/roles/11111111-1111-1111-1111-111111111111
+
+Response สำเร็จ: HTTP 204 No Content
+
+ไม่มี response body
+
+เงื่อนไขสำคัญ:
+
+- ไม่อนุญาตให้ลบ administrator role ID
+  be808ed9-e820-46a8-a0d9-b3d1dd2defa1
+- หากมี user ใช้ Role นี้อยู่ database foreign key จะป้องกันการลบ และตอบ HTTP 409
+- role_permissions ของ Role ที่ลบจะถูกลบอัตโนมัติด้วย ON DELETE CASCADE
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: id ไม่ถูกต้อง หรือพยายามลบ administrator role
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 404: ไม่พบ Role
+- HTTP 409: Role กำลังถูกใช้งานโดย resource อื่น เช่น user
+
+
+3. Permission API
+=================
+
+Permission ประกอบด้วยข้อมูลดังนี้:
+
+- id: UUID ของ Permission
+- code: รหัส Permission ต้องไม่ว่าง ยาวไม่เกิน 100 ตัวอักษร และห้ามซ้ำ
+- description: รายละเอียด สามารถเป็น null ได้
+- created_at: วันเวลาที่สร้าง
+
+
+3.1 ดู Permission ทั้งหมด
+-------------------------
+
+GET /api/permissions
+
+สิทธิ์: ผู้ใช้ที่ login แล้ว
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt http://localhost:8080/api/permissions
+
+Response สำเร็จ: HTTP 200
+
+{
+  "permissions": [
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "code": "agent.execute",
+      "description": "สั่งงาน agent",
+      "created_at": "2026-08-09T10:00:00Z"
+    }
+  ]
+}
+
+หากไม่มี Permission ระบบจะตอบกลับเป็น "permissions": []
+
+
+3.2 ดู Permission ตาม ID
+------------------------
+
+GET /api/permissions/:id
+
+สิทธิ์: ผู้ใช้ที่ login แล้ว
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  http://localhost:8080/api/permissions/22222222-2222-2222-2222-222222222222
+
+Response สำเร็จ: HTTP 200
+
+{
+  "id": "22222222-2222-2222-2222-222222222222",
+  "code": "agent.execute",
+  "description": "สั่งงาน agent",
+  "created_at": "2026-08-09T10:00:00Z"
+}
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: id ไม่ใช่ UUID ที่ถูกต้อง
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 404: ไม่พบ Permission
+
+
+3.3 สร้าง Permission
+--------------------
+
+POST /api/permissions
+
+สิทธิ์: administrator เท่านั้น
+
+Request body:
+
+{
+  "code": "agent.execute",
+  "description": "สั่งงาน agent"
+}
+
+รายละเอียด field:
+
+- code: จำเป็นต้องส่ง ห้ามเป็นข้อความว่าง และยาวไม่เกิน 100 ตัวอักษร
+- description: ไม่บังคับ ส่ง null หรือไม่ส่งได้
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  -X POST http://localhost:8080/api/permissions \
+  -H "Content-Type: application/json" \
+  -d '{"code":"agent.execute","description":"สั่งงาน agent"}'
+
+Response สำเร็จ: HTTP 201
+
+{
+  "message": "permission created",
+  "id": "permission-uuid-created-by-server"
+}
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: JSON หรือ code ไม่ถูกต้อง
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 409: code ซ้ำกับ Permission ที่มีอยู่แล้ว
+
+
+3.4 แก้ไข Permission
+--------------------
+
+PUT /api/permissions/:id
+
+สิทธิ์: administrator เท่านั้น
+
+Request body:
+
+{
+  "code": "agent.command.execute",
+  "description": "อนุญาตให้ส่งคำสั่งไปยัง agent"
+}
+
+หมายเหตุ:
+
+- code เป็น field บังคับทุกครั้งที่เรียก PUT
+- หากต้องการล้าง description ให้ส่ง "description": null
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  -X PUT http://localhost:8080/api/permissions/22222222-2222-2222-2222-222222222222 \
+  -H "Content-Type: application/json" \
+  -d '{"code":"agent.command.execute","description":"อนุญาตให้ส่งคำสั่งไปยัง agent"}'
+
+Response สำเร็จ: HTTP 200
+
+{
+  "message": "permission updated"
+}
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: id, JSON หรือ code ไม่ถูกต้อง
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 404: ไม่พบ Permission
+- HTTP 409: code ซ้ำกับ Permission อื่น
+
+
+3.5 ลบ Permission
+-----------------
+
+DELETE /api/permissions/:id
+
+สิทธิ์: administrator เท่านั้น
+
+ตัวอย่าง request:
+
+curl -i -b cookies.txt \
+  -X DELETE http://localhost:8080/api/permissions/22222222-2222-2222-2222-222222222222
+
+Response สำเร็จ: HTTP 204 No Content
+
+ไม่มี response body
+
+เมื่อ Permission ถูกลบ ความสัมพันธ์ใน role_permissions จะถูกลบอัตโนมัติ
+ด้วย ON DELETE CASCADE แต่ Role จะไม่ถูกลบ
+
+ข้อผิดพลาดที่เป็นไปได้:
+
+- HTTP 400: id ไม่ใช่ UUID ที่ถูกต้อง
+- HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
+- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 404: ไม่พบ Permission
+
+
+4. HTTP Status Code ที่ใช้
+==========================
+
+- 200 OK: อ่านหรือแก้ไขข้อมูลสำเร็จ
+- 201 Created: สร้าง Role หรือ Permission สำเร็จ
+- 204 No Content: ลบข้อมูลสำเร็จ ไม่มี response body
+- 400 Bad Request: รูปแบบ request, UUID หรือข้อมูล validation ไม่ถูกต้อง
+- 401 Unauthorized: ไม่มี session, cookie ไม่ถูกต้อง, session หมดอายุ หรือบัญชีไม่ ACTIVE
+- 403 Forbidden: login แล้วแต่ role_id ไม่ใช่ administrator
+- 404 Not Found: ไม่พบ Role หรือ Permission ตาม ID
+- 409 Conflict: name/code ซ้ำ หรือ Role กำลังถูกใช้งาน
+- 500 Internal Server Error: database หรือระบบภายในทำงานผิดพลาด
+
+
+5. ลำดับการใช้งานตัวอย่าง
+=========================
+
+1) Login ด้วยบัญชี administrator และบันทึก cookie
+2) สร้าง Permission ที่ระบบต้องใช้
+3) เรียก GET /api/permissions เพื่อเก็บ Permission UUID
+4) สร้าง Role โดยส่ง Permission UUID ใน permission_ids
+5) เรียก GET /api/roles/:id เพื่อตรวจสอบ Role และ Permission ที่ผูกไว้
+6) แก้ไข Role ด้วย PUT เมื่อต้องการเปลี่ยนชื่อ รายละเอียด หรือ Permission
+7) ลบ Role/Permission ที่ไม่ใช้งานแล้ว โดยตรวจสอบก่อนว่าไม่มี user ใช้ Role นั้น
+
+
+6. หมายเหตุสำหรับ Frontend
+==========================
+
+หากเรียก API จาก browser ด้วย fetch และ frontend อยู่คนละ origin ต้องส่ง cookie ด้วย:
+
+fetch("http://localhost:8080/api/roles", {
+  method: "GET",
+  credentials: "include"
+});
+
+สำหรับ POST/PUT ให้เพิ่ม header และ body:
+
+fetch("http://localhost:8080/api/permissions", {
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    code: "agent.execute",
+    description: "สั่งงาน agent"
+  })
+});
+
+หาก frontend อยู่คนละ origin ตัว server ต้องตั้งค่า CORS ให้รองรับ origin ของ frontend
+และเปิด AllowCredentials ด้วย มิฉะนั้น browser จะไม่ส่ง session cookie ไปกับ request
