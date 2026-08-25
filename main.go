@@ -55,5 +55,12 @@ func main() {
 	users.Put("/:id", service.UpdateUser(db))
 	users.Delete("/:id", service.DeleteUser(db))
 
+	agents := api.Group("/agents")
+	agents.Get("/", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsReadPermission), service.ListAgents(db))
+	agents.Get("/:id", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsReadPermission), service.GetAgent(db))
+	agents.Post("/", service.RequirePermission(db, service.AgentsManagePermission), service.CreateAgent(db))
+	agents.Put("/:id", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsEditPermission), service.UpdateAgent(db))
+	agents.Delete("/:id", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsDeletePermission), service.DeleteAgent(db))
+
 	app.Listen(":8080")
 }

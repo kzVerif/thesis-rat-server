@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/lib/pq"
 )
 
 const RoomsManagePermission = "rooms.manage"
@@ -17,6 +18,12 @@ type roomInput struct {
 }
 
 func RequirePermission(db *sql.DB, code string) fiber.Handler {
+	return RequireAnyPermission(db, code)
+}
+
+// RequireAnyPermission allows a request when the signed-in user's role has at
+// least one of the supplied permission codes. RequireAuth must run first.
+func RequireAnyPermission(db *sql.DB, codes ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		u, ok := c.Locals(authUserLocal).(*authUser)
 		if !ok || u == nil {
@@ -27,8 +34,8 @@ func RequirePermission(db *sql.DB, code string) fiber.Handler {
 		err := db.QueryRow(`SELECT EXISTS (
 			SELECT 1 FROM role_permissions rp
 			JOIN permissions p ON p.id=rp.permission_id
-			WHERE rp.role_id=$1 AND p.code=$2
-		)`, u.RoleID, code).Scan(&allowed)
+			WHERE rp.role_id=$1 AND p.code=ANY($2::text[])
+		)`, u.RoleID, pq.Array(codes)).Scan(&allowed)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "ไม่สามารถตรวจสอบสิทธิ์ได้"})
 		}

@@ -19,7 +19,11 @@ CREATE TABLE permissions (
 INSERT INTO permissions (code, description)
 VALUES
     ('rooms.manage', 'จัดการข้อมูลห้อง'),
-    ('users.manage', 'จัดการข้อมูลผู้ใช้')
+    ('users.manage', 'จัดการข้อมูลผู้ใช้'),
+    ('agents.manage', 'จัดการเครื่องลูกทั้งหมด'),
+    ('agents.read', 'ดูรายชื่อและข้อมูลเครื่องลูก'),
+    ('agents.edit', 'แก้ไขข้อมูลเครื่องลูก'),
+    ('agents.delete', 'ลบเครื่องลูก')
 ON CONFLICT (code) DO NOTHING;
 CREATE TABLE role_permissions (
     role_id UUID NOT NULL,
