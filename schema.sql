@@ -333,3 +333,60 @@ ON av_scan_results(agent_id);
 
 CREATE INDEX idx_av_scan_results_command_id
 ON av_scan_results(command_id);
+
+
+-- =========================
+--  Add tokens table
+-- =========================
+CREATE TABLE IF NOT EXISTS tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    user_id UUID NULL,
+    agent_id UUID NULL,
+
+    token TEXT NOT NULL,
+    token_type VARCHAR(50) NOT NULL,
+
+    max_use INT DEFAULT NULL,
+    used_count INT NOT NULL DEFAULT 0,
+
+    expires_at TIMESTAMPTZ,
+    is_revoked BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_tokens_token UNIQUE (token),
+
+    CONSTRAINT fk_tokens_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    CONSTRAINT fk_tokens_agent
+        FOREIGN KEY (agent_id)
+        REFERENCES agents(id)
+        ON DELETE SET NULL
+);
+
+-- Indexes for tokens
+CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON tokens (user_id);
+CREATE INDEX IF NOT EXISTS idx_tokens_agent_id ON tokens (agent_id);
+-- Unique index on token (constraint creates one, but ensure named index exists)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_token_unique ON tokens (token);
+
+-- Optional: partial index for active tokens to speed up validation queries
+CREATE INDEX IF NOT EXISTS idx_tokens_active_token ON tokens (token)
+WHERE is_revoked = FALSE AND (expires_at IS NULL OR expires_at > NOW());
+
+-- Comments for documentation
+COMMENT ON TABLE tokens IS 'เก็บ Token ต่าง ๆ ที่ผูกกับผู้ใช้หรือเครื่องลูก (agent) (เช่น refresh token, api key)';
+COMMENT ON COLUMN tokens.id IS 'Primary key (UUID, gen_random_uuid())';
+COMMENT ON COLUMN tokens.user_id IS 'อ้างอิงไปยัง users.id; จะเป็น NULL ถ้า token ไม่ได้ผูกกับผู้ใช้';
+COMMENT ON COLUMN tokens.agent_id IS 'อ้างอิงไปยัง agents.id; จะเป็น NULL ถ้า token ไม่ได้ผูกกับ agent';
+COMMENT ON COLUMN tokens.token IS 'ค่า Token จริง (เก็บเป็น text); ต้องไม่ซ้ำ';
+COMMENT ON COLUMN tokens.token_type IS 'ประเภทของ token เช่น ''refresh_token'', ''api_key''';
+COMMENT ON COLUMN tokens.max_use IS 'จำนวนครั้งสูงสุดที่ token นี้สามารถใช้งานได้; NULL = ไม่จำกัด';
+COMMENT ON COLUMN tokens.used_count IS 'จำนวนครั้งที่ token ถูกใช้งานแล้ว (นับเพิ่มเมื่อใช้)';
+COMMENT ON COLUMN tokens.expires_at IS 'เวลาที่ token หมดอายุ (timestamptz)';
+COMMENT ON COLUMN tokens.is_revoked IS 'สถานะการยกเลิก token; TRUE = ถูกยกเลิก';
+COMMENT ON COLUMN tokens.created_at IS 'เวลาที่สร้าง record (timestamp with time zone)';

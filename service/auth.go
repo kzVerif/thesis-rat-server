@@ -15,9 +15,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const cookieName = "__Host-session"
-const sessionTTL = 7 * 24 * time.Hour
-const authUserLocal = "authUser"
+const (
+	hostCookieName = "__Host-session"
+	devCookieName  = "session"
+	sessionTTL     = 7 * 24 * time.Hour
+	authUserLocal  = "authUser"
+)
 
 const AdministratorRoleID = "be808ed9-e820-46a8-a0d9-b3d1dd2defa1"
 
@@ -95,19 +98,47 @@ func randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+func isSecureConnection(c *fiber.Ctx) bool {
+	return c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
+}
+
 func writeCookie(c *fiber.Ctx, token string, expires time.Time) {
-	c.Cookie(&fiber.Cookie{Name: cookieName, Value: token, Path: "/", Expires: expires,
-		MaxAge: int(time.Until(expires).Seconds()), HTTPOnly: true, Secure: true,
-		SameSite: fiber.CookieSameSiteLaxMode})
+	secure := isSecureConnection(c)
+	name := devCookieName
+	if secure {
+		name = hostCookieName
+	}
+	c.Cookie(&fiber.Cookie{
+		Name:     name,
+		Value:    token,
+		Path:     "/",
+		Expires:  expires,
+		MaxAge:   int(time.Until(expires).Seconds()),
+		HTTPOnly: true,
+		Secure:   secure,
+		SameSite: fiber.CookieSameSiteLaxMode,
+	})
 }
 
 func removeCookie(c *fiber.Ctx) {
-	c.Cookie(&fiber.Cookie{Name: cookieName, Path: "/", Expires: time.Unix(0, 0), MaxAge: -1,
-		HTTPOnly: true, Secure: true, SameSite: fiber.CookieSameSiteLaxMode})
+	for _, name := range []string{devCookieName, hostCookieName} {
+		c.Cookie(&fiber.Cookie{
+			Name:     name,
+			Path:     "/",
+			Expires:  time.Unix(0, 0),
+			MaxAge:   -1,
+			HTTPOnly: true,
+			Secure:   false,
+			SameSite: fiber.CookieSameSiteLaxMode,
+		})
+	}
 }
 
 func authenticate(db *sql.DB, c *fiber.Ctx) (*authUser, error) {
-	token := c.Cookies(cookieName)
+	token := c.Cookies(hostCookieName)
+	if token == "" {
+		token = c.Cookies(devCookieName)
+	}
 	if token == "" {
 		removeCookie(c)
 		return nil, c.Status(401).JSON(fiber.Map{"error": "ไม่ได้รับอนุญาตให้เข้าใช้งาน"})

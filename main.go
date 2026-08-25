@@ -4,11 +4,20 @@ import (
 	"rat-server/service"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	_ "github.com/lib/pq"
 )
 
 func main() {
 	app := fiber.New()
+
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "http://localhost:3000, http://localhost:5173, http://127.0.0.1:3000, http://127.0.0.1:5173",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowCredentials: true,
+		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
+	}))
+
 	db = SetupDatabase()
 	defer db.Close()
 
@@ -54,6 +63,15 @@ func main() {
 	users.Post("/", service.CreateManagedUser(db))
 	users.Put("/:id", service.UpdateUser(db))
 	users.Delete("/:id", service.DeleteUser(db))
+
+	// Tokens management
+	tokens := api.Group("/tokens", service.RequirePermission(db, service.UsersManagePermission))
+	tokens.Get("/", service.ListTokens(db))
+	tokens.Post("/", service.CreateToken(db))
+	tokens.Put("/:id", service.UpdateToken(db))
+	tokens.Patch("/:id", service.UpdateToken(db))
+	tokens.Delete("/:id", service.RevokeToken(db))
+	tokens.Post("/validate", service.ValidateToken(db))
 
 	app.Listen(":8080")
 }
