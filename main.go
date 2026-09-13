@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"log"
+	"os"
 	"rat-server/service"
 
 	"github.com/gofiber/fiber/v2"
@@ -8,10 +11,31 @@ import (
 )
 
 func main() {
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		// Keep upload bodies as a stream instead of retaining the whole file in RAM.
+		StreamRequestBody: true,
+		BodyLimit:         service.MaxUploadSize + (1 << 20),
+	})
 	db = SetupDatabase()
 	defer db.Close()
+	retentionDays, err := service.ParseLogRetentionDays(os.Getenv("LOG_RETENTION_DAYS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	retentionCtx, stopRetention := context.WithCancel(context.Background())
+	defer stopRetention()
+	go service.RunLogRetention(retentionCtx, db, retentionDays)
 
+	uploadDir := os.Getenv("UPLOAD_DIR")
+	if uploadDir == "" {
+		uploadDir = "uploads"
+	}
+	fileStore, err := service.NewFileStore(db, uploadDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	app.Use("/api", service.AuditRequests(db))
 	auth := app.Group("/api/auth")
 	auth.Post("/register", service.CreateUser(db))
 	auth.Post("/login", service.Login(db))
@@ -27,12 +51,15 @@ func main() {
 	// ใส่ API ตรงตำแหน่งนี้
 
 	api := app.Group("/api", service.RequireAuth(db))
+	logs := api.Group("/logs", service.RequirePermission(db, service.LogsReadPermission))
+	logs.Get("/", service.ListLogs(db))
+	logs.Get("/:id", service.GetLog(db))
 	roles := api.Group("/roles")
 	roles.Get("/", service.ListRoles(db))
 	roles.Get("/:id", service.GetRole(db))
-	roles.Post("/", service.RequireAdministrator, service.CreateRole(db))
-	roles.Put("/:id", service.RequireAdministrator, service.UpdateRole(db))
-	roles.Delete("/:id", service.RequireAdministrator, service.DeleteRole(db))
+	roles.Post("/", service.RequirePermission(db, service.RoleManagePermission), service.CreateRole(db))
+	roles.Put("/:id", service.RequirePermission(db, service.RoleManagePermission), service.UpdateRole(db))
+	roles.Delete("/:id", service.RequirePermission(db, service.RoleManagePermission), service.DeleteRole(db))
 
 	permissions := api.Group("/permissions")
 	permissions.Get("/", service.ListPermissions(db))
@@ -62,5 +89,22 @@ func main() {
 	agents.Put("/:id", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsEditPermission), service.UpdateAgent(db))
 	agents.Delete("/:id", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsDeletePermission), service.DeleteAgent(db))
 
-	app.Listen(":8080")
+	files := api.Group("/files")
+	scans := api.Group("/av-scan-results", service.RequirePermission(db, service.AVReadPermission))
+	scans.Get("/", service.ListAVScanResults(db))
+	scans.Get("/:id", service.GetAVScanResult(db))
+
+	files.Get("/", service.RequirePermission(db, service.FilesManagePermission), fileStore.List)
+	files.Post("/upload", service.RequireAnyPermission(db, service.FilesManagePermission, service.FilesUploadPermission), fileStore.Upload)
+	files.Patch("/:filename", service.RequirePermission(db, service.FilesManagePermission), fileStore.Rename)
+	files.Delete("/:filename", service.RequireAnyPermission(db, service.FilesManagePermission, service.FilesDeletePermission), fileStore.Delete)
+
+	distributions := api.Group("/file-distributions", service.RequirePermission(db, service.FilesDistributePermission))
+	distributions.Get("/", service.ListFileDistributions(db))
+	distributions.Get("/:jobId", service.GetFileDistribution(db))
+
+	listenAddress := envOrDefault("SERVER_HOST", "0.0.0.0") + ":" + envOrDefault("SERVER_PORT", "8080")
+	if err := app.Listen(listenAddress); err != nil {
+		log.Fatal(err)
+	}
 }

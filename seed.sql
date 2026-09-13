@@ -46,6 +46,8 @@ SET description = EXCLUDED.description;
 
 INSERT INTO permissions (code, description)
 VALUES
+    ('role.manage', 'จัดการบทบาทและสิทธิ์ของบทบาท'),
+    ('av.read', 'อ่านข้อมูลการสแกนไวรัส'),
     ('agents.manage', 'จัดการเครื่องลูกทั้งหมด'),
     ('rooms.manage', 'จัดการห้อง'),
     ('tokens.manage', 'จัดการ Token'),

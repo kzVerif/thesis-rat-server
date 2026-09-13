@@ -75,6 +75,7 @@ func CreateUser(db *sql.DB) fiber.Handler {
 			})
 		}
 
+		c.Locals(authUserLocal, &authUser{ID: userID, Username: user.Username})
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"message": "สร้างผู้ใช้สำเร็จ", "user_id": userID,
 			"username": user.Username, "email": user.Email, "fullname": user.Fullname,
@@ -136,6 +137,9 @@ func RequireAuth(db *sql.DB) fiber.Handler {
 		if err != nil {
 			return err
 		}
+		if u == nil {
+			return nil // authenticate already sent the rejection response.
+		}
 		c.Locals(authUserLocal, u)
 		return c.Next()
 	}
@@ -194,6 +198,7 @@ func Login(db *sql.DB) fiber.Handler {
 		}
 		_, _ = db.Exec(`UPDATE users SET last_login_at=NOW(),failed_login_attempts=0 WHERE id=$1`, id)
 		writeCookie(c, token, expires)
+		c.Locals(authUserLocal, &authUser{ID: id, Username: username})
 		return c.JSON(fiber.Map{"message": "เข้าสู่ระบบสำเร็จ", "session_id": sessionID, "username": username})
 	}
 }

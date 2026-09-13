@@ -43,33 +43,33 @@ func normalizeAgentInput(in *agentInput) error {
 	in.Hostname = strings.TrimSpace(in.Hostname)
 	in.Status = strings.ToUpper(strings.TrimSpace(in.Status))
 	if in.Hostname == "" || len(in.Hostname) > 255 {
-		return errors.New("hostname is required and must not exceed 255 characters")
+		return errors.New("กรุณาระบุ hostname และต้องมีความยาวไม่เกิน 255 ตัวอักษร")
 	}
 	if in.Status == "" {
 		in.Status = "OFFLINE"
 	}
 	if in.Status != "ONLINE" && in.Status != "OFFLINE" && in.Status != "WARNING" && in.Status != "DISABLED" {
-		return errors.New("status must be ONLINE, OFFLINE, WARNING, or DISABLED")
+		return errors.New("status ต้องเป็น ONLINE, OFFLINE, WARNING หรือ DISABLED")
 	}
 	if in.RoomID != nil {
 		value := strings.TrimSpace(*in.RoomID)
 		if value == "" {
 			in.RoomID = nil
 		} else if _, err := uuid.Parse(value); err != nil {
-			return errors.New("invalid room_id")
+			return errors.New("room_id ไม่ถูกต้อง")
 		} else {
 			in.RoomID = &value
 		}
 	}
 	if len(in.OSInfo) != 0 && string(in.OSInfo) != "null" && !json.Valid(in.OSInfo) {
-		return errors.New("invalid os_info JSON")
+		return errors.New("ข้อมูล JSON ใน os_info ไม่ถูกต้อง")
 	}
 	if in.MACAddress != nil {
 		value := strings.ToLower(strings.TrimSpace(*in.MACAddress))
 		if value == "" {
 			in.MACAddress = nil
 		} else if !macAddressPattern.MatchString(value) {
-			return errors.New("mac_address must use the format 00:11:22:33:44:55")
+			return errors.New("mac_address ต้องอยู่ในรูปแบบ 00:11:22:33:44:55")
 		} else {
 			in.MACAddress = &value
 		}
@@ -79,7 +79,7 @@ func normalizeAgentInput(in *agentInput) error {
 		if value == "" {
 			in.IPAddress = nil
 		} else if net.ParseIP(value) == nil {
-			return errors.New("invalid ip_address")
+			return errors.New("ip_address ไม่ถูกต้อง")
 		} else {
 			in.IPAddress = &value
 		}
@@ -126,45 +126,45 @@ func nullableString(value string) interface{} {
 func agentDBError(c *fiber.Ctx, err error) error {
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code == "23503" {
-		return c.Status(400).JSON(fiber.Map{"error": "room_id does not exist"})
+		return c.Status(400).JSON(fiber.Map{"error": "ไม่พบ room_id ที่ระบุ"})
 	}
-	return c.Status(500).JSON(fiber.Map{"error": "unable to process agent data"})
+	return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถดำเนินการกับข้อมูล Agent ได้"})
 }
 
 func ListAgents(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		page, err := positiveQueryInt(c, "page", 1, 0)
 		if err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "page must be a positive integer"})
+			return c.Status(400).JSON(fiber.Map{"error": "page ต้องเป็นจำนวนเต็มที่มากกว่า 0"})
 		}
 		limit, err := positiveQueryInt(c, "limit", 20, 100)
 		if err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "limit must be a positive integer not exceeding 100"})
+			return c.Status(400).JSON(fiber.Map{"error": "limit ต้องเป็นจำนวนเต็มตั้งแต่ 1 ถึง 100"})
 		}
 		if int64(page-1) > int64(^uint64(0)>>1)/int64(limit) {
-			return c.Status(400).JSON(fiber.Map{"error": "page is too large"})
+			return c.Status(400).JSON(fiber.Map{"error": "ค่า page มีขนาดใหญ่เกินไป"})
 		}
 		offset := int64(page-1) * int64(limit)
 
 		var total int64
 		if err := db.QueryRow(`SELECT COUNT(*) FROM agents`).Scan(&total); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "unable to list agents"})
+			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านรายการ Agent ได้"})
 		}
 		rows, err := db.Query(agentSelect+` ORDER BY a.hostname,a.id LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "unable to list agents"})
+			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านรายการ Agent ได้"})
 		}
 		defer rows.Close()
 		items := make([]fiber.Map, 0)
 		for rows.Next() {
 			item, err := scanAgent(rows)
 			if err != nil {
-				return c.Status(500).JSON(fiber.Map{"error": "unable to list agents"})
+				return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านรายการ Agent ได้"})
 			}
 			items = append(items, item)
 		}
 		if rows.Err() != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "unable to list agents"})
+			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านรายการ Agent ได้"})
 		}
 		totalPages := int64(0)
 		if total > 0 {
@@ -186,7 +186,7 @@ func positiveQueryInt(c *fiber.Ctx, name string, defaultValue, maximum int) (int
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 || (maximum > 0 && value > maximum) {
-		return 0, errors.New("invalid positive integer")
+		return 0, errors.New("ค่าต้องเป็นจำนวนเต็มที่มากกว่า 0")
 	}
 	return value, nil
 }
@@ -199,10 +199,10 @@ func GetAgent(db *sql.DB) fiber.Handler {
 		}
 		item, err := scanAgent(db.QueryRow(agentSelect+` WHERE a.id=$1`, id))
 		if errors.Is(err, sql.ErrNoRows) {
-			return c.Status(404).JSON(fiber.Map{"error": "agent not found"})
+			return c.Status(404).JSON(fiber.Map{"error": "ไม่พบ Agent"})
 		}
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "unable to read agent"})
+			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านข้อมูล Agent ได้"})
 		}
 		return c.JSON(item)
 	}
@@ -212,7 +212,7 @@ func CreateAgent(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in agentInput
 		if c.BodyParser(&in) != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
+			return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลที่ส่งมาไม่ถูกต้อง"})
 		}
 		if err := normalizeAgentInput(&in); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
@@ -224,7 +224,7 @@ func CreateAgent(db *sql.DB) fiber.Handler {
 		if err != nil {
 			return agentDBError(c, err)
 		}
-		return c.Status(201).JSON(fiber.Map{"message": "agent created", "id": id})
+		return c.Status(201).JSON(fiber.Map{"message": "สร้าง Agent สำเร็จ", "id": id})
 	}
 }
 
@@ -236,7 +236,7 @@ func UpdateAgent(db *sql.DB) fiber.Handler {
 		}
 		var in agentInput
 		if c.BodyParser(&in) != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
+			return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลที่ส่งมาไม่ถูกต้อง"})
 		}
 		if err := normalizeAgentInput(&in); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
@@ -249,9 +249,9 @@ func UpdateAgent(db *sql.DB) fiber.Handler {
 		}
 		n, _ := result.RowsAffected()
 		if n == 0 {
-			return c.Status(404).JSON(fiber.Map{"error": "agent not found"})
+			return c.Status(404).JSON(fiber.Map{"error": "ไม่พบ Agent"})
 		}
-		return c.JSON(fiber.Map{"message": "agent updated"})
+		return c.JSON(fiber.Map{"message": "แก้ไข Agent สำเร็จ"})
 	}
 }
 
@@ -267,7 +267,7 @@ func DeleteAgent(db *sql.DB) fiber.Handler {
 		}
 		n, _ := result.RowsAffected()
 		if n == 0 {
-			return c.Status(404).JSON(fiber.Map{"error": "agent not found"})
+			return c.Status(404).JSON(fiber.Map{"error": "ไม่พบ Agent"})
 		}
 		return c.SendStatus(204)
 	}

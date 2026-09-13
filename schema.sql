@@ -25,6 +25,14 @@ VALUES
     ('agents.edit', 'แก้ไขข้อมูลเครื่องลูก'),
     ('agents.delete', 'ลบเครื่องลูก')
 ON CONFLICT (code) DO NOTHING;
+INSERT INTO permissions (code, description)
+VALUES
+    ('role.manage', 'Manage roles and their permissions'),
+    ('av.read', 'Read antivirus scan results'),
+    ('files.upload', 'Upload files to the server'),
+    ('files.manage', 'Manage files stored on the server'),
+    ('files.delete', 'Delete files stored on the server')
+ON CONFLICT (code) DO NOTHING;
 CREATE TABLE role_permissions (
     role_id UUID NOT NULL,
     permission_id UUID NOT NULL,
@@ -211,6 +219,9 @@ CREATE TABLE logs (
         REFERENCES agents(id)
         ON DELETE SET NULL
 );
+INSERT INTO permissions(code,description) VALUES ('logs.read','Read audit logs')
+ON CONFLICT (code) DO NOTHING;
+CREATE INDEX idx_logs_action_created_at ON logs(action,created_at DESC,id DESC);
 CREATE TABLE files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -331,9 +342,95 @@ ON logs(created_at DESC);
 CREATE INDEX idx_files_uploaded_by
 ON files(uploaded_by);
 
+CREATE UNIQUE INDEX idx_files_filename
+ON files(filename);
+
+CREATE UNIQUE INDEX idx_files_storage_path
+ON files(storage_path);
+
 
 CREATE INDEX idx_av_scan_results_agent_id
 ON av_scan_results(agent_id);
 
 CREATE INDEX idx_av_scan_results_command_id
 ON av_scan_results(command_id);
+
+INSERT INTO permissions (code, description)
+VALUES ('files.distribute', 'Distribute stored files to agents')
+ON CONFLICT (code) DO NOTHING;
+
+CREATE TABLE file_distribution_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    file_id UUID NOT NULL REFERENCES files(id) ON DELETE RESTRICT,
+    requested_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    request_id UUID,
+    target_type VARCHAR(10) NOT NULL CHECK (target_type IN ('ROOM', 'AGENTS')),
+    room_id UUID REFERENCES rooms(id) ON DELETE RESTRICT,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN
+        ('PENDING','DISPATCHING','IN_PROGRESS','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED')),
+    total_targets INTEGER NOT NULL DEFAULT 0 CHECK (total_targets >= 0),
+    completed_targets INTEGER NOT NULL DEFAULT 0 CHECK (completed_targets >= 0),
+    failed_targets INTEGER NOT NULL DEFAULT 0 CHECK (failed_targets >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    CONSTRAINT file_distribution_jobs_target CHECK
+        ((target_type = 'ROOM' AND room_id IS NOT NULL) OR (target_type = 'AGENTS' AND room_id IS NULL)),
+    CONSTRAINT file_distribution_jobs_request_unique UNIQUE (requested_by, request_id)
+);
+
+CREATE TABLE file_distribution_targets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES file_distribution_jobs(id) ON DELETE CASCADE,
+    agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN
+        ('PENDING','SENT','DOWNLOADING','VERIFYING','COMPLETED','FAILED','OFFLINE','CANCELLED')),
+    progress SMALLINT NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+    downloaded_bytes BIGINT NOT NULL DEFAULT 0 CHECK (downloaded_bytes >= 0),
+    error_code VARCHAR(100), error_message TEXT,
+    started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT file_distribution_targets_job_agent_unique UNIQUE (job_id, agent_id)
+);
+
+CREATE TABLE file_download_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    job_id UUID NOT NULL REFERENCES file_distribution_jobs(id) ON DELETE CASCADE,
+    file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_distribution_jobs_status_created ON file_distribution_jobs(status, created_at DESC);
+CREATE INDEX idx_distribution_targets_job_status ON file_distribution_targets(job_id, status);
+CREATE INDEX idx_distribution_targets_agent ON file_distribution_targets(agent_id);
+CREATE INDEX idx_download_grants_expires ON file_download_grants(expires_at);
+
+CREATE TABLE av_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requested_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    scan_type VARCHAR(30) NOT NULL,
+    path TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_av_jobs_requested_by_created_at ON av_jobs(requested_by, created_at DESC);
+
+ALTER TABLE av_scan_results ADD COLUMN job_id UUID;
+
+-- Historical requests had one command per job. Reuse its ID for a deterministic backfill.
+-- Include all existing scan results, including legacy command_type values.
+INSERT INTO av_jobs(id, requested_by, scan_type, path, created_at)
+SELECT c.id, c.issued_by,
+       COALESCE((SELECT a.scan_type FROM av_scan_results a WHERE a.command_id=c.id ORDER BY a.created_at,a.id LIMIT 1), c.payload->>'scan_type', 'unknown'),
+       COALESCE(c.payload->>'path', ''), c.created_at
+FROM commands c
+WHERE c.command_type='virus_scan' OR EXISTS (SELECT 1 FROM av_scan_results a WHERE a.command_id=c.id);
+
+UPDATE av_scan_results SET job_id=command_id;
+
+ALTER TABLE av_scan_results
+    ALTER COLUMN job_id SET NOT NULL,
+    ADD CONSTRAINT av_scan_results_job_id_fkey FOREIGN KEY (job_id) REFERENCES av_jobs(id) ON DELETE RESTRICT,
+    ADD CONSTRAINT uq_av_scan_job_agent UNIQUE (job_id, agent_id),
+    ADD CONSTRAINT uq_av_scan_command UNIQUE (command_id);

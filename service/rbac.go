@@ -11,6 +11,8 @@ import (
 	"github.com/lib/pq"
 )
 
+const RoleManagePermission = "role.manage"
+
 type roleInput struct {
 	Name          string    `json:"name"`
 	Description   *string   `json:"description"`

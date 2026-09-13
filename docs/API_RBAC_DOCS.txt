@@ -52,11 +52,12 @@ curl -i -c cookies.txt \
 การกำหนดสิทธิ์:
 
 - GET: ผู้ใช้ทุกคนที่ login และมี session ที่ยังใช้งานได้สามารถเรียกได้
-- POST, PUT และ DELETE: เรียกได้เฉพาะผู้ใช้ที่มี role_id เท่ากับ
+- POST, PUT และ DELETE ของ /api/roles: ต้องมี permission role.manage ผ่าน role_permissions
+- POST, PUT และ DELETE ของ /api/permissions: เรียกได้เฉพาะผู้ใช้ที่มี role_id เท่ากับ
   be808ed9-e820-46a8-a0d9-b3d1dd2defa1
 - การตรวจ administrator ใช้ role_id โดยตรง ไม่ได้ตรวจจากชื่อ role
 - หากไม่มี session หรือ session หมดอายุ จะได้รับ HTTP 401
-- หาก login แล้วแต่ไม่ใช่ administrator จะได้รับ HTTP 403
+- หาก login แล้วแต่ไม่มีสิทธิ์ที่ endpoint กำหนด จะได้รับ HTTP 403
 
 ตรวจสอบข้อมูลผู้ใช้ปัจจุบัน:
 
@@ -158,7 +159,7 @@ Response สำเร็จ: HTTP 200
 
 POST /api/roles
 
-สิทธิ์: administrator เท่านั้น
+สิทธิ์: ต้องมี permission role.manage
 
 Request body:
 
@@ -197,7 +198,7 @@ Response สำเร็จ: HTTP 201
 
 - HTTP 400: JSON ไม่ถูกต้อง, name ไม่ถูกต้อง, Permission ID ไม่ใช่ UUID หรือไม่พบ Permission
 - HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
-- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 403: ผู้ใช้ไม่มี permission role.manage
 - HTTP 409: ชื่อ Role ซ้ำ
 
 การสร้าง Role และการผูก Permission ทำงานใน database transaction เดียวกัน
@@ -209,7 +210,7 @@ Response สำเร็จ: HTTP 201
 
 PUT /api/roles/:id
 
-สิทธิ์: administrator เท่านั้น
+สิทธิ์: ต้องมี permission role.manage
 
 Path parameter:
 
@@ -250,7 +251,7 @@ Response สำเร็จ: HTTP 200
 
 - HTTP 400: id, JSON, name หรือ Permission ID ไม่ถูกต้อง หรือไม่พบ Permission บางรายการ
 - HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
-- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 403: ผู้ใช้ไม่มี permission role.manage
 - HTTP 404: ไม่พบ Role
 - HTTP 409: ชื่อ Role ซ้ำ
 
@@ -260,7 +261,7 @@ Response สำเร็จ: HTTP 200
 
 DELETE /api/roles/:id
 
-สิทธิ์: administrator เท่านั้น
+สิทธิ์: ต้องมี permission role.manage
 
 ตัวอย่าง request:
 
@@ -282,7 +283,7 @@ Response สำเร็จ: HTTP 204 No Content
 
 - HTTP 400: id ไม่ถูกต้อง หรือพยายามลบ administrator role
 - HTTP 401: ยังไม่ได้ login หรือ session ใช้งานไม่ได้
-- HTTP 403: ผู้ใช้ไม่ใช่ administrator
+- HTTP 403: ผู้ใช้ไม่มี permission role.manage
 - HTTP 404: ไม่พบ Role
 - HTTP 409: Role กำลังถูกใช้งานโดย resource อื่น เช่น user
 
@@ -470,7 +471,7 @@ Response สำเร็จ: HTTP 204 No Content
 - 204 No Content: ลบข้อมูลสำเร็จ ไม่มี response body
 - 400 Bad Request: รูปแบบ request, UUID หรือข้อมูล validation ไม่ถูกต้อง
 - 401 Unauthorized: ไม่มี session, cookie ไม่ถูกต้อง, session หมดอายุ หรือบัญชีไม่ ACTIVE
-- 403 Forbidden: login แล้วแต่ role_id ไม่ใช่ administrator
+- 403 Forbidden: login แล้วแต่ไม่มีสิทธิ์ที่ endpoint กำหนด
 - 404 Not Found: ไม่พบ Role หรือ Permission ตาม ID
 - 409 Conflict: name/code ซ้ำ หรือ Role กำลังถูกใช้งาน
 - 500 Internal Server Error: database หรือระบบภายในทำงานผิดพลาด

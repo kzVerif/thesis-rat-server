@@ -2,13 +2,26 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"os"
 )
 
 var db *sql.DB
 
 func SetupDatabase() *sql.DB {
-	const connectionString = "user=postgres password=kanghunz12 dbname=ratsystem sslmode=disable"
+	connectionString := os.Getenv("DATABASE_URL")
+	if connectionString == "" {
+		connectionString = fmt.Sprintf(
+			"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			envOrDefault("DB_HOST", "localhost"),
+			envOrDefault("DB_PORT", "5432"),
+			envOrDefault("DB_USER", "postgres"),
+			envOrDefault("DB_PASSWORD", "kanghunz12"),
+			envOrDefault("DB_NAME", "ratsystem"),
+			envOrDefault("DB_SSLMODE", "disable"),
+		)
+	}
 
 	var err error
 	db, err = sql.Open("postgres", connectionString)
@@ -21,4 +34,11 @@ func SetupDatabase() *sql.DB {
 	}
 
 	return db
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
