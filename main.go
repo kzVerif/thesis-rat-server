@@ -11,11 +11,7 @@ import (
 )
 
 func main() {
-	app := fiber.New(fiber.Config{
-		// Keep upload bodies as a stream instead of retaining the whole file in RAM.
-		StreamRequestBody: true,
-		BodyLimit:         service.MaxUploadSize + (1 << 20),
-	})
+	app := fiber.New()
 	db = SetupDatabase()
 	defer db.Close()
 	retentionDays, err := service.ParseLogRetentionDays(os.Getenv("LOG_RETENTION_DAYS"))
@@ -81,6 +77,15 @@ func main() {
 	users.Post("/", service.CreateManagedUser(db))
 	users.Put("/:id", service.UpdateUser(db))
 	users.Delete("/:id", service.DeleteUser(db))
+
+	// Tokens management
+	tokens := api.Group("/tokens", service.RequirePermission(db, service.UsersManagePermission))
+	tokens.Get("/", service.ListTokens(db))
+	tokens.Post("/", service.CreateToken(db))
+	tokens.Put("/:id", service.UpdateToken(db))
+	tokens.Patch("/:id", service.UpdateToken(db))
+	tokens.Delete("/:id", service.RevokeToken(db))
+	tokens.Post("/validate", service.ValidateToken(db))
 
 	agents := api.Group("/agents")
 	agents.Get("/", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsReadPermission), service.ListAgents(db))
