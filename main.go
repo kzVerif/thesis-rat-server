@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"rat-server/service"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/lib/pq"
@@ -12,6 +13,7 @@ import (
 
 func main() {
 	app := fiber.New()
+	app.Use(localCORS)
 	db = SetupDatabase()
 	defer db.Close()
 	retentionDays, err := service.ParseLogRetentionDays(os.Getenv("LOG_RETENTION_DAYS"))
@@ -32,6 +34,9 @@ func main() {
 	}
 
 	app.Use("/api", service.AuditRequests(db))
+	// First enrollment authenticates with a token before session middleware.
+	app.Post("/api/agents/register", service.RegisterAgent(db))
+	app.Post("/api/tokens/validate", service.ValidateToken(db))
 	auth := app.Group("/api/auth")
 	auth.Post("/register", service.CreateUser(db))
 	auth.Post("/login", service.Login(db))
@@ -47,6 +52,8 @@ func main() {
 	// ใส่ API ตรงตำแหน่งนี้
 
 	api := app.Group("/api", service.RequireAuth(db))
+	dashboard := api.Group("/dashboard")
+	dashboard.Get("/", service.GetDashboard(db))
 	logs := api.Group("/logs", service.RequirePermission(db, service.LogsReadPermission))
 	logs.Get("/", service.ListLogs(db))
 	logs.Get("/:id", service.GetLog(db))
@@ -79,13 +86,13 @@ func main() {
 	users.Delete("/:id", service.DeleteUser(db))
 
 	// Tokens management
-	tokens := api.Group("/tokens", service.RequirePermission(db, service.UsersManagePermission))
+	tokens := api.Group("/tokens", service.RequirePermission(db, service.TokensManagePermission))
 	tokens.Get("/", service.ListTokens(db))
+	tokens.Get("/:id", service.GetToken(db))
 	tokens.Post("/", service.CreateToken(db))
 	tokens.Put("/:id", service.UpdateToken(db))
 	tokens.Patch("/:id", service.UpdateToken(db))
 	tokens.Delete("/:id", service.RevokeToken(db))
-	tokens.Post("/validate", service.ValidateToken(db))
 
 	agents := api.Group("/agents")
 	agents.Get("/", service.RequireAnyPermission(db, service.AgentsManagePermission, service.AgentsReadPermission), service.ListAgents(db))
@@ -112,4 +119,30 @@ func main() {
 	if err := app.Listen(listenAddress); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// localCORS allows credentialed browser requests from the configured frontend
+// origins. Keep the list explicit; wildcard origins cannot use cookies.
+func localCORS(c *fiber.Ctx) error {
+	origin := c.Get("Origin")
+	if origin != "" {
+		allowed := os.Getenv("FRONTEND_ORIGIN")
+		if allowed == "" {
+			allowed = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
+		}
+		for _, value := range strings.Split(allowed, ",") {
+			if strings.TrimSpace(value) == origin {
+				c.Set("Access-Control-Allow-Origin", origin)
+				c.Set("Access-Control-Allow-Credentials", "true")
+				c.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+				c.Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+				c.Set("Vary", "Origin")
+				if c.Method() == fiber.MethodOptions {
+					return c.SendStatus(fiber.StatusNoContent)
+				}
+				break
+			}
+		}
+	}
+	return c.Next()
 }

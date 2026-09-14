@@ -1,345 +1,280 @@
 package service
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
-	"fmt"
-	"net/http"
-	"strconv"
+	"errors"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
+const TokensManagePermission = "tokens.manage"
+
+// Plaintext enrollment secrets are returned only by CreateToken.
 type TokenRecord struct {
-	ID        string     `json:"id"`
-	UserID    *string    `json:"user_id,omitempty"`
-	AgentID   *string    `json:"agent_id,omitempty"`
-	Token     string     `json:"token"`
-	TokenType string     `json:"token_type"`
-	MaxUse    *int       `json:"max_use,omitempty"`
-	UsedCount int        `json:"used_count"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	IsRevoked bool       `json:"is_revoked"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID              string     `json:"id"`
+	CreatedBy       *string    `json:"created_by"`
+	CreatorUsername *string    `json:"creator_username"`
+	MaxUse          *int64     `json:"max_use"`
+	UsedCount       int64      `json:"used_count"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	IsRevoked       bool       `json:"is_revoked"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
-// ListTokens returns all tokens (admin permission expected)
+const tokenColumns = `id,created_by,max_use,used_count,expires_at,is_revoked,created_at,updated_at`
+const tokenSelect = `SELECT t.id,t.created_by,t.max_use,t.used_count,t.expires_at,t.is_revoked,t.created_at,t.updated_at,u.username
+	FROM tokens t LEFT JOIN users u ON u.id=t.created_by`
+
+func scanToken(row interface{ Scan(...interface{}) error }, withUsername bool) (TokenRecord, error) {
+	var item TokenRecord
+	args := []interface{}{&item.ID, &item.CreatedBy, &item.MaxUse, &item.UsedCount, &item.ExpiresAt, &item.IsRevoked, &item.CreatedAt, &item.UpdatedAt}
+	if withUsername {
+		args = append(args, &item.CreatorUsername)
+	}
+	err := row.Scan(args...)
+	return item, err
+}
+
+func decodeTokenJSON(body []byte, target interface{}) error {
+	if bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
+		return errors.New("JSON object is required")
+	}
+	d := json.NewDecoder(bytes.NewReader(body))
+	d.DisallowUnknownFields()
+	if err := d.Decode(target); err != nil {
+		return errors.New("invalid JSON or unsupported field")
+	}
+	if err := d.Decode(new(interface{})); err != io.EOF {
+		return errors.New("exactly one JSON object is required")
+	}
+	return nil
+}
+
+type tokenInput struct {
+	MaxUse    json.RawMessage `json:"max_use"`
+	ExpiresAt json.RawMessage `json:"expires_at"`
+}
+
+func (in tokenInput) values() (*int64, *time.Time, error) {
+	var max *int64
+	var expires *time.Time
+	if len(in.MaxUse) > 0 {
+		if err := json.Unmarshal(in.MaxUse, &max); err != nil || (max != nil && (*max < 1 || *max > 2147483647)) {
+			return nil, nil, errors.New("max_use must be an integer between 1 and 2147483647, or null")
+		}
+	}
+	if len(in.ExpiresAt) > 0 {
+		if err := json.Unmarshal(in.ExpiresAt, &expires); err != nil || (expires != nil && !expires.After(time.Now())) {
+			return nil, nil, errors.New("expires_at must be a future RFC3339 timestamp, or null")
+		}
+	}
+	return max, expires, nil
+}
+
+func tokenError(c *fiber.Ctx) error {
+	return c.Status(500).JSON(fiber.Map{"error": "unable to process enrollment token"})
+}
+func tokenID(c *fiber.Ctx) (string, error) {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return "", errors.New("id must be a valid UUID")
+	}
+	return id.String(), nil
+}
+
 func ListTokens(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		rows, err := db.Query(`SELECT id,user_id,agent_id,token,token_type,max_use,used_count,expires_at,is_revoked,created_at FROM tokens ORDER BY created_at DESC`)
+		page, err := positiveQueryInt(c, "page", 1, 0)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านรายการ tokens ได้"})
+			return c.Status(400).JSON(fiber.Map{"error": "invalid page"})
+		}
+		limit, err := positiveQueryInt(c, "limit", 20, 100)
+		if err != nil || int64(page-1) > int64(^uint64(0)>>1)/int64(limit) {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid pagination"})
+		}
+		tx, err := db.BeginTx(c.UserContext(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		if err != nil {
+			return tokenError(c)
+		}
+		defer tx.Rollback()
+		var total int64
+		if err := tx.QueryRowContext(c.UserContext(), `SELECT COUNT(*) FROM tokens`).Scan(&total); err != nil {
+			return tokenError(c)
+		}
+		rows, err := tx.QueryContext(c.UserContext(), tokenSelect+` ORDER BY t.created_at DESC,t.id DESC LIMIT $1 OFFSET $2`, limit, int64(page-1)*int64(limit))
+		if err != nil {
+			return tokenError(c)
 		}
 		defer rows.Close()
-		out := make([]TokenRecord, 0)
+		items := make([]TokenRecord, 0)
 		for rows.Next() {
-			var t TokenRecord
-			var userID, agentID sql.NullString
-			var maxUse sql.NullInt64
-			var expires sql.NullTime
-			if err := rows.Scan(&t.ID, &userID, &agentID, &t.Token, &t.TokenType, &maxUse, &t.UsedCount, &expires, &t.IsRevoked, &t.CreatedAt); err != nil {
-				return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอ่านรายการ tokens ได้"})
+			item, err := scanToken(rows, true)
+			if err != nil {
+				return tokenError(c)
 			}
-			if userID.Valid {
-				v := userID.String
-				t.UserID = &v
-			}
-			if agentID.Valid {
-				v := agentID.String
-				t.AgentID = &v
-			}
-			if maxUse.Valid {
-				v := int(maxUse.Int64)
-				t.MaxUse = &v
-			}
-			if expires.Valid {
-				t.ExpiresAt = &expires.Time
-			}
-			out = append(out, t)
+			items = append(items, item)
 		}
-		return c.JSON(fiber.Map{"tokens": out})
+		if rows.Err() != nil {
+			return tokenError(c)
+		}
+		if err := rows.Close(); err != nil {
+			return tokenError(c)
+		}
+		if err := tx.Commit(); err != nil {
+			return tokenError(c)
+		}
+		pages := total / int64(limit)
+		if total%int64(limit) != 0 {
+			pages++
+		}
+		return c.JSON(fiber.Map{"tokens": items, "pagination": fiber.Map{"page": page, "limit": limit, "total": total, "total_pages": pages}})
 	}
 }
 
-// CreateToken creates a new token and returns the plaintext token
+func GetToken(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := tokenID(c)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		item, err := scanToken(db.QueryRowContext(c.UserContext(), tokenSelect+` WHERE t.id=$1`, id), true)
+		if errors.Is(err, sql.ErrNoRows) {
+			return c.Status(404).JSON(fiber.Map{"error": "token not found"})
+		}
+		if err != nil {
+			return tokenError(c)
+		}
+		return c.JSON(item)
+	}
+}
+
 func CreateToken(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(c.Body(), &raw); err != nil {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "รูปแบบข้อมูลไม่ถูกต้อง"})
+		var in tokenInput
+		if err := decodeTokenJSON(c.Body(), &in); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
-
-		var userID *string
-		if v, ok := raw["user_id"]; ok {
-			if string(v) != "null" {
-				var s string
-				if err := json.Unmarshal(v, &s); err == nil {
-					userID = &s
-				}
-			}
-		}
-
-		var agentID *string
-		if v, ok := raw["agent_id"]; ok {
-			if string(v) != "null" {
-				var s string
-				if err := json.Unmarshal(v, &s); err == nil {
-					agentID = &s
-				}
-			}
-		}
-
-		tokenType := "api_key"
-		if v, ok := raw["token_type"]; ok {
-			var s string
-			if err := json.Unmarshal(v, &s); err == nil && s != "" {
-				tokenType = s
-			}
-		}
-
-		var maxUse *int
-		if v, ok := raw["max_use"]; ok {
-			if string(v) != "null" {
-				// accept number or string
-				var num json.Number
-				if err := json.Unmarshal(v, &num); err == nil {
-					if i64, err := num.Int64(); err == nil {
-						i := int(i64)
-						maxUse = &i
-					}
-				} else {
-					var s string
-					if err := json.Unmarshal(v, &s); err == nil {
-						if i64, err := strconv.ParseInt(s, 10, 64); err == nil {
-							i := int(i64)
-							maxUse = &i
-						}
-					}
-				}
-			}
-		}
-
-		var expiresAt *time.Time
-		if v, ok := raw["expires_at"]; ok {
-			if string(v) != "null" {
-				var s string
-				if err := json.Unmarshal(v, &s); err == nil {
-					// try RFC3339 first
-					if t, err := time.Parse(time.RFC3339, s); err == nil {
-						expiresAt = &t
-					} else if t, err := time.Parse("2006-01-02", s); err == nil {
-						// date-only string, treat as midnight UTC
-						tt := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-						expiresAt = &tt
-					}
-				}
-			}
-		}
-
-		token, err := randomToken()
+		max, expires, err := in.values()
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถสร้าง token ได้"})
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
-
-		var id string
-		err = db.QueryRow(`INSERT INTO tokens (user_id,agent_id,token,token_type,max_use,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
-			userID, agentID, token, tokenType, maxUse, expiresAt).Scan(&id)
+		secret, err := randomToken()
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถบันทึก token ได้"})
+			return tokenError(c)
 		}
-		return c.Status(201).JSON(fiber.Map{"id": id, "token": token})
+		user := signedInUser(c)
+		item, err := scanToken(db.QueryRowContext(c.UserContext(), `INSERT INTO tokens(created_by,token_hash,max_use,expires_at)
+			VALUES($1,$2,$3,$4) RETURNING `+tokenColumns, user.ID, hashToken(secret), max, expires), false)
+		if err != nil {
+			return tokenError(c)
+		}
+		item.CreatorUsername = &user.Username
+		c.Set(fiber.HeaderCacheControl, "no-store")
+		return c.Status(201).JSON(struct {
+			TokenRecord
+			Token string `json:"token"`
+		}{item, secret})
 	}
 }
 
-// UpdateToken updates editable fields of a token
 func UpdateToken(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		id := c.Params("id")
-		if id == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "id parameter is required"})
-		}
-
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(c.Body(), &raw); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "รูปแบบข้อมูลไม่ถูกต้อง"})
-		}
-
-		sets := make([]string, 0)
-		args := make([]interface{}, 0)
-		idx := 1
-
-		// max_use or maxUse
-		vMaxUse, hasMaxUse := raw["max_use"]
-		if !hasMaxUse {
-			vMaxUse, hasMaxUse = raw["maxUse"]
-		}
-		if hasMaxUse {
-			strVal := strings.TrimSpace(string(vMaxUse))
-			if strVal == "null" || strVal == `""` || strVal == "" {
-				sets = append(sets, fmt.Sprintf("max_use=$%d", idx))
-				args = append(args, nil)
-				idx++
-			} else {
-				// try as number first
-				var num json.Number
-				if err := json.Unmarshal(vMaxUse, &num); err == nil {
-					i64, err := num.Int64()
-					if err != nil {
-						return c.Status(400).JSON(fiber.Map{"error": "max_use must be an integer"})
-					}
-					sets = append(sets, fmt.Sprintf("max_use=$%d", idx))
-					args = append(args, i64)
-					idx++
-				} else {
-					// try as string
-					var s string
-					if err := json.Unmarshal(vMaxUse, &s); err != nil {
-						return c.Status(400).JSON(fiber.Map{"error": "max_use must be an integer or string representing integer"})
-					}
-					s = strings.TrimSpace(s)
-					if s == "" || s == "null" {
-						sets = append(sets, fmt.Sprintf("max_use=$%d", idx))
-						args = append(args, nil)
-						idx++
-					} else {
-						i, err := strconv.ParseInt(s, 10, 64)
-						if err != nil {
-							return c.Status(400).JSON(fiber.Map{"error": "max_use must be an integer"})
-						}
-						sets = append(sets, fmt.Sprintf("max_use=$%d", idx))
-						args = append(args, i)
-						idx++
-					}
-				}
-			}
-		}
-
-		// expires_at or expiresAt
-		vExpiresAt, hasExpiresAt := raw["expires_at"]
-		if !hasExpiresAt {
-			vExpiresAt, hasExpiresAt = raw["expiresAt"]
-		}
-		if hasExpiresAt {
-			strVal := strings.TrimSpace(string(vExpiresAt))
-			if strVal == "null" || strVal == `""` || strVal == "" {
-				sets = append(sets, fmt.Sprintf("expires_at=$%d", idx))
-				args = append(args, nil)
-				idx++
-			} else {
-				var s string
-				if err := json.Unmarshal(vExpiresAt, &s); err != nil {
-					return c.Status(400).JSON(fiber.Map{"error": "expires_at must be date string or null"})
-				}
-				s = strings.TrimSpace(s)
-				if s == "" || s == "null" {
-					sets = append(sets, fmt.Sprintf("expires_at=$%d", idx))
-					args = append(args, nil)
-					idx++
-				} else {
-					if t, err := time.Parse(time.RFC3339, s); err == nil {
-						sets = append(sets, fmt.Sprintf("expires_at=$%d", idx))
-						args = append(args, t)
-						idx++
-					} else if t, err := time.Parse("2006-01-02", s); err == nil {
-						tt := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-						sets = append(sets, fmt.Sprintf("expires_at=$%d", idx))
-						args = append(args, tt)
-						idx++
-					} else {
-						return c.Status(400).JSON(fiber.Map{"error": "expires_at must be RFC3339 or YYYY-MM-DD format"})
-					}
-				}
-			}
-		}
-
-		// is_revoked or isRevoked
-		vIsRevoked, hasIsRevoked := raw["is_revoked"]
-		if !hasIsRevoked {
-			vIsRevoked, hasIsRevoked = raw["isRevoked"]
-		}
-		if hasIsRevoked {
-			var val *bool
-			if err := json.Unmarshal(vIsRevoked, &val); err != nil {
-				return c.Status(400).JSON(fiber.Map{"error": "is_revoked must be boolean or null"})
-			}
-			sets = append(sets, fmt.Sprintf("is_revoked=$%d", idx))
-			args = append(args, val)
-			idx++
-		}
-
-		if len(sets) == 0 {
-			return c.Status(400).JSON(fiber.Map{"error": "ไม่มีฟิลด์ให้แก้ไข"})
-		}
-
-		sqlStr := fmt.Sprintf("UPDATE tokens SET %s WHERE id=$%d", strings.Join(sets, ", "), idx)
-		args = append(args, id)
-
-		res, err := db.Exec(sqlStr, args...)
+		id, err := tokenID(c)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถอัพเดต token ได้", "detail": err.Error(), "sql": sqlStr, "args": fmt.Sprintf("%v", args)})
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return c.Status(404).JSON(fiber.Map{"error": "ไม่พบ token"})
+		var in tokenInput
+		if err := decodeTokenJSON(c.Body(), &in); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		if len(in.MaxUse) == 0 && len(in.ExpiresAt) == 0 {
+			return c.Status(400).JSON(fiber.Map{"error": "no editable fields"})
+		}
+		max, expires, err := in.values()
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		tx, err := db.BeginTx(c.UserContext(), nil)
+		if err != nil {
+			return tokenError(c)
+		}
+		defer tx.Rollback()
+		var used int64
+		err = tx.QueryRowContext(c.UserContext(), `SELECT used_count FROM tokens WHERE id=$1 FOR UPDATE`, id).Scan(&used)
+		if errors.Is(err, sql.ErrNoRows) {
+			return c.Status(404).JSON(fiber.Map{"error": "token not found"})
+		}
+		if err != nil {
+			return tokenError(c)
+		}
+		if max != nil && *max < used {
+			return c.Status(409).JSON(fiber.Map{"error": "max_use cannot be less than used_count"})
+		}
+		_, err = tx.ExecContext(c.UserContext(), `UPDATE tokens SET max_use=CASE WHEN $2 THEN $3::integer ELSE max_use END,
+			expires_at=CASE WHEN $4 THEN $5::timestamptz ELSE expires_at END,updated_at=clock_timestamp() WHERE id=$1`,
+			id, len(in.MaxUse) > 0, max, len(in.ExpiresAt) > 0, expires)
+		if err != nil {
+			return tokenError(c)
+		}
+		if err := tx.Commit(); err != nil {
+			return tokenError(c)
 		}
 		return c.JSON(fiber.Map{"message": "updated"})
 	}
 }
 
-// RevokeToken sets is_revoked = true
+// DELETE terminates enrollment while preserving creator and usage history.
 func RevokeToken(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		id := c.Params("id")
-		if id == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "id parameter is required"})
-		}
-		res, err := db.Exec(`DELETE FROM tokens WHERE id=$1`, id)
+		id, err := tokenID(c)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถลบ token ได้"})
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
-		n, _ := res.RowsAffected()
+		res, err := db.ExecContext(c.UserContext(), `UPDATE tokens SET is_revoked=TRUE,
+			updated_at=CASE WHEN is_revoked THEN updated_at ELSE clock_timestamp() END WHERE id=$1`, id)
+		if err != nil {
+			return tokenError(c)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return tokenError(c)
+		}
 		if n == 0 {
-			return c.Status(404).JSON(fiber.Map{"error": "ไม่พบ token"})
+			return c.Status(404).JSON(fiber.Map{"error": "token not found"})
 		}
-		return c.JSON(fiber.Map{"message": "deleted"})
+		return c.JSON(fiber.Map{"message": "revoked"})
 	}
 }
 
-// ValidateToken checks a token and increments used_count when applicable
+const usableTokenCondition = `token_hash=$1 AND NOT is_revoked
+	AND (expires_at IS NULL OR expires_at>clock_timestamp())
+	AND (max_use IS NULL OR used_count<max_use) AND used_count<2147483647`
+
+// Optional preflight; only RegisterAgent consumes a use.
 func ValidateToken(db *sql.DB) fiber.Handler {
-	type req struct {
-		Token string `json:"token"`
-	}
 	return func(c *fiber.Ctx) error {
-		var in req
-		if err := c.BodyParser(&in); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "รูปแบบข้อมูลไม่ถูกต้อง"})
+		var in struct {
+			Token string `json:"token"`
 		}
-		var id string
-		var maxUse sql.NullInt64
-		var usedCount int
-		var expires sql.NullTime
-		var isRevoked bool
-		err := db.QueryRow(`SELECT id,max_use,used_count,expires_at,is_revoked FROM tokens WHERE token=$1`, in.Token).Scan(&id, &maxUse, &usedCount, &expires, &isRevoked)
+		if err := decodeTokenJSON(c.Body(), &in); err != nil || strings.TrimSpace(in.Token) == "" || len(in.Token) > 512 {
+			return c.Status(400).JSON(fiber.Map{"error": "token is required (maximum 512 bytes)"})
+		}
+		var valid bool
+		err := db.QueryRowContext(c.UserContext(), `SELECT EXISTS(SELECT 1 FROM tokens WHERE `+usableTokenCondition+`)`, hashToken(in.Token)).Scan(&valid)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				return c.Status(404).JSON(fiber.Map{"valid": false, "error": "token not found"})
-			}
-			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถตรวจสอบ token ได้"})
+			return tokenError(c)
 		}
-		if isRevoked {
-			return c.Status(403).JSON(fiber.Map{"valid": false, "error": "token revoked"})
+		c.Set(fiber.HeaderCacheControl, "no-store")
+		if !valid {
+			return c.Status(403).JSON(fiber.Map{"valid": false, "error": "token is invalid, expired, revoked, or exhausted"})
 		}
-		if expires.Valid && expires.Time.Before(time.Now()) {
-			return c.Status(403).JSON(fiber.Map{"valid": false, "error": "token expired"})
-		}
-		if maxUse.Valid && int(maxUse.Int64) <= usedCount {
-			return c.Status(403).JSON(fiber.Map{"valid": false, "error": "token use limit exceeded"})
-		}
-		// increment used_count
-		_, _ = db.Exec(`UPDATE tokens SET used_count=used_count+1 WHERE id=$1`, id)
 		return c.JSON(fiber.Map{"valid": true})
 	}
 }

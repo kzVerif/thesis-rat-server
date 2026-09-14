@@ -7,7 +7,7 @@
 ## 📌 สรุปภาพรวม (Overview)
 
 1. **เพิ่มระบบจัดการ Token (Tokens Management):** รองรับการออก Token สำหรับ Agent / API Key, กำหนดสิทธิ์, จำกัดจำนวนครั้งการใช้งาน (`max_use`), กำหนดวันหมดอายุ (`expires_at`), การระงับการใช้งาน (`is_revoked`) และระบบตรวจสอบ Token (`/api/tokens/validate`)
-2. **ระบบ Cookie ปรับให้รองรับทั้ง Localhost (HTTP) และ Production (HTTPS):** ไม่กระทบความปลอดภัยเดิมบน Production และทำให้สามารถรัน/ทดสอบบนเครื่อง Localhost ผ่าน Safari/Chrome ได้โดยไม่ติดปัญหา Cookie หาย
+2. **ระบบ Cookie ใช้ `__Host-session` เท่านั้น:** Cookie เป็น `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/` และต้องเรียกผ่าน HTTPS ทั้ง local และ production
 3. **รักษาความเข้ากันได้ 100% (Backward Compatibility):** API เดิมทั้งหมด (`/api/auth`, `/api/roles`, `/api/permissions`, `/api/rooms`, `/api/users`) ยังคงทำงานเหมือนเดิมทุกประการ
 
 ---

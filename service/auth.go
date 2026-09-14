@@ -17,7 +17,6 @@ import (
 
 const (
 	hostCookieName = "__Host-session"
-	devCookieName  = "session"
 	sessionTTL     = 7 * 24 * time.Hour
 	authUserLocal  = "authUser"
 )
@@ -82,6 +81,7 @@ func CreateUser(db *sql.DB) fiber.Handler {
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"message": "สร้างผู้ใช้สำเร็จ", "user_id": userID,
 			"username": user.Username, "email": user.Email, "fullname": user.Fullname,
+			"status": "DISABLED",
 		})
 	}
 }
@@ -99,47 +99,26 @@ func randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func isSecureConnection(c *fiber.Ctx) bool {
-	return c.Protocol() == "https" || c.Get("X-Forwarded-Proto") == "https"
-}
-
 func writeCookie(c *fiber.Ctx, token string, expires time.Time) {
-	secure := isSecureConnection(c)
-	name := devCookieName
-	if secure {
-		name = hostCookieName
-	}
 	c.Cookie(&fiber.Cookie{
-		Name:     name,
+		Name:     hostCookieName,
 		Value:    token,
 		Path:     "/",
 		Expires:  expires,
 		MaxAge:   int(time.Until(expires).Seconds()),
 		HTTPOnly: true,
-		Secure:   secure,
+		Secure:   true,
 		SameSite: fiber.CookieSameSiteLaxMode,
 	})
 }
 
 func removeCookie(c *fiber.Ctx) {
-	for _, name := range []string{devCookieName, hostCookieName} {
-		c.Cookie(&fiber.Cookie{
-			Name:     name,
-			Path:     "/",
-			Expires:  time.Unix(0, 0),
-			MaxAge:   -1,
-			HTTPOnly: true,
-			Secure:   false,
-			SameSite: fiber.CookieSameSiteLaxMode,
-		})
-	}
+	c.Cookie(&fiber.Cookie{Name: hostCookieName, Path: "/", Expires: time.Unix(0, 0), MaxAge: -1,
+		HTTPOnly: true, Secure: true, SameSite: fiber.CookieSameSiteLaxMode})
 }
 
 func authenticate(db *sql.DB, c *fiber.Ctx) (*authUser, error) {
 	token := c.Cookies(hostCookieName)
-	if token == "" {
-		token = c.Cookies(devCookieName)
-	}
 	if token == "" {
 		removeCookie(c)
 		return nil, c.Status(401).JSON(fiber.Map{"error": "ไม่ได้รับอนุญาตให้เข้าใช้งาน"})
@@ -213,7 +192,7 @@ func Login(db *sql.DB) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถเข้าสู่ระบบได้"})
 		}
 		if status != "ACTIVE" {
-			return c.Status(403).JSON(fiber.Map{"error": "บัญชีนี้ไม่สามารถใช้งานได้"})
+			return c.Status(403).JSON(fiber.Map{"error": "บัญชีนี้ไม่สามารถใช้งานได้", "code": "ACCOUNT_NOT_ACTIVE", "status": status})
 		}
 		token, err := randomToken()
 		if err != nil {

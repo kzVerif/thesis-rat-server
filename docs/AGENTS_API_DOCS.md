@@ -8,6 +8,8 @@
 - Request body ใช้ `Content-Type: application/json`
 - Agent ID และ `room_id` ใช้ UUID
 
+การลงทะเบียนครั้งแรกใช้ `POST /api/agents/register` พร้อม enrollment token และไม่ต้องใช้ session ของผู้ใช้ ดูรายละเอียด request, quota และการใช้ token ที่ [TOKENS_API_DOCS.md](TOKENS_API_DOCS.md)
+
 ## Permission
 
 | Endpoint | Permission ที่ใช้ได้ |

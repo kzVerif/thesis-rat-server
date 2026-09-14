@@ -125,6 +125,9 @@ func nullableString(value string) interface{} {
 
 func agentDBError(c *fiber.Ctx, err error) error {
 	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		return c.Status(409).JSON(fiber.Map{"error": "agent MAC address is already registered"})
+	}
 	if errors.As(err, &pqErr) && pqErr.Code == "23503" {
 		return c.Status(400).JSON(fiber.Map{"error": "ไม่พบ room_id ที่ระบุ"})
 	}

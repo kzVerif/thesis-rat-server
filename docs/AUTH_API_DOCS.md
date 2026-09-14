@@ -4,9 +4,9 @@
 
 - Base URL: `http://localhost:8080`
 - Request body ใช้ `Content-Type: application/json`
-- ระบบยืนยันตัวตนด้วย session cookie ชื่อ `__Host-session`
+- ระบบยืนยันตัวตนด้วย session cookie ชื่อ `__Host-session` เท่านั้น
 - Session มีอายุ 7 วันนับจากเวลาที่ Login
-- Cookie เป็น `HttpOnly`, `Secure`, `SameSite=Lax` และใช้ได้กับ path `/`
+- Cookie เป็น `HttpOnly`, `Secure`, `SameSite=Lax` และใช้ได้กับ path `/` โดยต้องเรียกผ่าน HTTPS
 - Session token จริงไม่ถูกเก็บในฐานข้อมูล ระบบเก็บค่า SHA-256 hash ไว้ใน `user_sessions.token_hash`
 
 Endpoint ที่ไม่ต้อง Login:
@@ -69,7 +69,8 @@ Response สำเร็จ: HTTP `201 Created`
   "user_id": "11111111-1111-1111-1111-111111111111",
   "username": "newuser",
   "email": "newuser@example.com",
-  "fullname": "New User"
+  "fullname": "New User",
+  "status": "DISABLED"
 }
 ```
 
@@ -124,7 +125,7 @@ curl -i -b cookies.txt http://localhost:8080/api/auth/me
 
 - HTTP `400`: ไม่ส่ง Username/Password หรือรูปแบบข้อมูลไม่ถูกต้อง
 - HTTP `401`: Username หรือ Password ไม่ถูกต้อง
-- HTTP `403`: บัญชีมีสถานะอื่นที่ไม่ใช่ `ACTIVE`
+- HTTP `403`: บัญชีมีสถานะอื่นที่ไม่ใช่ `ACTIVE` โดย response มี `code: ACCOUNT_NOT_ACTIVE` และ `status: DISABLED` หรือ `LOCKED`
 - HTTP `500`: ไม่สามารถสร้าง Session หรือเข้าสู่ระบบได้
 
 > Cookie กำหนดเป็น `Secure` จึงออกแบบให้ใช้งานผ่าน HTTPS ในระบบจริง หากทดสอบ HTTPS ด้วย certificate ภายใน สามารถเพิ่ม `-k` ให้ `curl` ได้
