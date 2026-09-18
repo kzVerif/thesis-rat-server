@@ -16,7 +16,7 @@ func SetupDatabase() *sql.DB {
 			envOrDefault("DB_HOST", "localhost"),
 			envOrDefault("DB_PORT", "5432"),
 			envOrDefault("DB_USER", "postgres"),
-			envOrDefault("DB_PASSWORD", "kanghunz12"),
+			envOrDefault("DB_PASSWORD", "102247"),
 			envOrDefault("DB_NAME", "ratsystem"),
 			envOrDefault("DB_SSLMODE", "disable"),
 		)
