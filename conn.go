@@ -4,13 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"os"
 )
 
 var db *sql.DB
 
 func SetupDatabase() *sql.DB {
-	connectionString := os.Getenv("DATABASE_URL")
+	connectionString := envOrDefault("DATABASE_URL", "")
 	if connectionString == "" {
 		connectionString = fmt.Sprintf(
 			"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
@@ -34,11 +33,4 @@ func SetupDatabase() *sql.DB {
 	}
 
 	return db
-}
-
-func envOrDefault(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
 }

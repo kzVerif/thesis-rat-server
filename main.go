@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"rat-server/service"
 	"strings"
 
@@ -12,11 +11,14 @@ import (
 )
 
 func main() {
+	if err := loadDotEnv(".env"); err != nil {
+		log.Fatal(err)
+	}
 	app := fiber.New()
 	app.Use(localCORS)
 	db = SetupDatabase()
 	defer db.Close()
-	retentionDays, err := service.ParseLogRetentionDays(os.Getenv("LOG_RETENTION_DAYS"))
+	retentionDays, err := service.ParseLogRetentionDays(envOrDefault("LOG_RETENTION_DAYS", "90"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -24,10 +26,7 @@ func main() {
 	defer stopRetention()
 	go service.RunLogRetention(retentionCtx, db, retentionDays)
 
-	uploadDir := os.Getenv("UPLOAD_DIR")
-	if uploadDir == "" {
-		uploadDir = "uploads"
-	}
+	uploadDir := envOrDefault("UPLOAD_DIR", "uploads")
 	fileStore, err := service.NewFileStore(db, uploadDir)
 	if err != nil {
 		log.Fatal(err)
@@ -126,10 +125,7 @@ func main() {
 func localCORS(c *fiber.Ctx) error {
 	origin := c.Get("Origin")
 	if origin != "" {
-		allowed := os.Getenv("FRONTEND_ORIGIN")
-		if allowed == "" {
-			allowed = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
-		}
+		allowed := envOrDefault("FRONTEND_ORIGIN", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173")
 		for _, value := range strings.Split(allowed, ",") {
 			if strings.TrimSpace(value) == origin {
 				c.Set("Access-Control-Allow-Origin", origin)
