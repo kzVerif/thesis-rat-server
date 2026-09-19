@@ -1,0 +1,1 @@
+alter Table agents add column public_key TEXT NULL;

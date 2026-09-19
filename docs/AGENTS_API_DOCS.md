@@ -16,6 +16,7 @@
 | --- | --- |
 | `GET /api/agents/` | `agents.read` หรือ `agents.manage` |
 | `GET /api/agents/:id` | `agents.read` หรือ `agents.manage` |
+| `GET /api/agents/:id/exists` | ไม่ต้องใช้ session หรือ permission |
 | `POST /api/agents/` | `agents.manage` |
 | `PUT /api/agents/:id` | `agents.edit` หรือ `agents.manage` |
 | `DELETE /api/agents/:id` | `agents.delete` หรือ `agents.manage` |
@@ -144,7 +145,20 @@ curl -i -b cookies.txt \
 
 สำเร็จจะตอบ `200 OK` พร้อมข้อมูล Agent หนึ่งรายการ หากไม่พบจะตอบ `404 Not Found`
 
-## 3. สร้าง Agent
+## 3. ตรวจสอบว่า Agent ID มีอยู่หรือไม่
+
+```http
+GET /api/agents/:id/exists
+```
+
+```bash
+curl -i -b cookies.txt \
+  http://localhost:8080/api/agents/11111111-1111-1111-1111-111111111111/exists
+```
+
+เส้นนี้ไม่ต้อง Login และไม่ต้องใช้ permission ใด ๆ ถ้าพบ Agent จะตอบ `204 No Content` โดยไม่มี response body หากไม่พบจะตอบ `404 Not Found` โดยไม่มี response body
+
+## 4. สร้าง Agent
 
 ```http
 POST /api/agents/
@@ -246,6 +260,7 @@ curl -i -b cookies.txt \
 | --- | --- | --- |
 | `GET` | `/api/agents/` | `200 OK` |
 | `GET` | `/api/agents/:id` | `200 OK` |
+| `GET` | `/api/agents/:id/exists` | `204 No Content` |
 | `POST` | `/api/agents/` | `201 Created` |
 | `PUT` | `/api/agents/:id` | `200 OK` |
 | `DELETE` | `/api/agents/:id` | `204 No Content` |

@@ -35,6 +35,8 @@ func main() {
 	app.Use("/api", service.AuditRequests(db))
 	// First enrollment authenticates with a token before session middleware.
 	app.Post("/api/agents/register", service.RegisterAgent(db))
+	// Public probe used by agents to check whether their ID is enrolled.
+	app.Get("/api/agents/:id/exists", service.AgentExists(db))
 	app.Post("/api/tokens/validate", service.ValidateToken(db))
 	auth := app.Group("/api/auth")
 	auth.Post("/register", service.CreateUser(db))

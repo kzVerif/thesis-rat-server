@@ -51,6 +51,7 @@ CREATE TABLE public.agents (
     mac_address character varying(17),
     ip_address inet,
     status character varying(20) DEFAULT 'OFFLINE'::character varying NOT NULL,
+    public_key text NULL,
     last_seen timestamp with time zone,
     enrolled_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,

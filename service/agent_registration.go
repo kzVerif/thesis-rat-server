@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -20,6 +21,8 @@ func RegisterAgent(db *sql.DB) fiber.Handler {
 			MACAddress string          `json:"mac_address"`
 			OSInfo     json.RawMessage `json:"os_info"`
 			RoomID     *string         `json:"room_id"`
+			AgentID    *string         `json:"agent_id"`
+			PublicKey  string          `json:"public_key"`
 		}
 		if err := decodeTokenJSON(c.Body(), &in); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
@@ -29,6 +32,17 @@ func RegisterAgent(db *sql.DB) fiber.Handler {
 		}
 		if strings.TrimSpace(in.MACAddress) == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "mac_address is required"})
+		}
+		if in.AgentID == nil || strings.TrimSpace(*in.AgentID) == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "agent_id is required"})
+		}
+		if strings.TrimSpace(in.PublicKey) == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "public_key is required"})
+		}
+		agentID := strings.TrimSpace(*in.AgentID)
+		publicKey := in.PublicKey
+		if _, err := uuid.Parse(agentID); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "agent_id must be a valid UUID"})
 		}
 		ip := c.IP()
 		agent := agentInput{Hostname: in.Hostname, MACAddress: &in.MACAddress, OSInfo: in.OSInfo, RoomID: in.RoomID, IPAddress: &ip}
@@ -51,12 +65,15 @@ func RegisterAgent(db *sql.DB) fiber.Handler {
 			return tokenError(c)
 		}
 		var id string
-		err = tx.QueryRowContext(c.UserContext(), `INSERT INTO agents(room_id,hostname,os_info,mac_address,ip_address,status,enrolled_at)
-			VALUES($1,$2,$3::jsonb,$4,$5::inet,'OFFLINE',clock_timestamp()) RETURNING id`,
-			agent.RoomID, agent.Hostname, osInfoValue(agent.OSInfo), agent.MACAddress, ip).Scan(&id)
+		err = tx.QueryRowContext(c.UserContext(), `INSERT INTO agents(id,room_id,hostname,os_info,mac_address,ip_address,status,public_key,enrolled_at)
+			VALUES($1,$2,$3,$4::jsonb,$5,$6::inet,'OFFLINE',$7,clock_timestamp()) RETURNING id`,
+			agentID, agent.RoomID, agent.Hostname, osInfoValue(agent.OSInfo), agent.MACAddress, ip, publicKey).Scan(&id)
 		if err != nil {
 			var pgErr *pq.Error
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				if pgErr.Constraint == "agents_pkey" {
+					return c.Status(409).JSON(fiber.Map{"error": "agent_id is already registered"})
+				}
 				return c.Status(409).JSON(fiber.Map{"error": "agent MAC address is already registered"})
 			}
 			return agentDBError(c, err)

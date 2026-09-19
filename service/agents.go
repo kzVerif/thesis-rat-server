@@ -211,6 +211,24 @@ func GetAgent(db *sql.DB) fiber.Handler {
 	}
 }
 
+// AgentExists checks whether an Agent ID exists without returning Agent data.
+func AgentExists(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := routeID(c)
+		if err != nil {
+			return err
+		}
+		var exists bool
+		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1)`, id).Scan(&exists); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถตรวจสอบ Agent ได้"})
+		}
+		if !exists {
+			return c.SendStatus(404)
+		}
+		return c.SendStatus(204)
+	}
+}
+
 func CreateAgent(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in agentInput

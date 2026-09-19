@@ -170,6 +170,8 @@ Content-Type: application/json
 
 {
   "token": "plaintext-secret",
+  "agent_id": "11111111-1111-1111-1111-111111111111",
+  "public_key": "BASE64_VALUE_FROM_AGENT",
   "hostname": "workstation-01",
   "mac_address": "AA:BB:CC:DD:EE:FF",
   "os_info": { "name": "Windows" },
@@ -180,6 +182,8 @@ Content-Type: application/json
 ฟิลด์ที่จำเป็น:
 
 - `token`
+- `agent_id` (UUID ที่ agent สร้าง/ถือไว้ และต้องไม่ซ้ำในระบบ)
+- `public_key` (บังคับส่ง; Agent ต้องเข้ารหัสเป็น Base64 ก่อนส่ง และระบบจะบันทึกค่าที่ได้รับโดยตรง)
 - `hostname`
 - `mac_address`
 
