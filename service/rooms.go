@@ -36,6 +36,7 @@ func RequireAnyPermission(db *sql.DB, codes ...string) fiber.Handler {
 			JOIN permissions p ON p.id=rp.permission_id
 			WHERE rp.role_id=$1 AND p.code=ANY($2::text[])
 		)`, u.RoleID, pq.Array(codes)).Scan(&allowed)
+
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "ไม่สามารถตรวจสอบสิทธิ์ได้"})
 		}
