@@ -2,6 +2,10 @@
 
 Token ใช้สำหรับลงทะเบียน Agent ครั้งแรกเท่านั้น ไม่ใช่ session token และระบบจะไม่บันทึกว่า Agent ใดใช้ token ใดลงทะเบียน
 
+Enrollment authorization ไม่ใช่ Agent authentication: `/exists` ยืนยันเฉพาะการมี record
+และ Agent ID ไม่ใช่ secret การพิสูจน์ private-key ownership ของ WebSocket เป็น Phase 4
+Ed25519 ใช้ Sign/Verify; private key ต้องไม่ส่งมายัง REST Server
+
 เส้นจัดการ token ต้องเข้าสู่ระบบด้วย session ที่ยังใช้งานได้ และต้องมีสิทธิ์ `tokens.manage` ส่วนเส้นตรวจ token และลงทะเบียน Agent ไม่ต้องใช้ session ของผู้ใช้
 
 ## รายการ API
@@ -39,7 +43,7 @@ Token ใช้สำหรับลงทะเบียน Agent ครั้�
 ```http
 POST /api/tokens
 Content-Type: application/json
-Cookie: session=...
+Cookie: __Host-session=...
 ```
 
 ```json
@@ -183,7 +187,7 @@ Content-Type: application/json
 
 - `token`
 - `agent_id` (UUID ที่ agent สร้าง/ถือไว้ และต้องไม่ซ้ำในระบบ)
-- `public_key` (บังคับส่ง; Agent ต้องเข้ารหัสเป็น Base64 ก่อนส่ง และระบบจะบันทึกค่าที่ได้รับโดยตรง)
+- `public_key` (บังคับส่ง; standard padded Base64 ของ Ed25519 public key ขนาด 32 bytes)
 - `hostname`
 - `mac_address`
 
@@ -194,12 +198,21 @@ Content-Type: application/json
 
 เมื่อสำเร็จ ระบบจะสร้าง Agent ด้วยสถานะ `OFFLINE` และกำหนด `enrolled_at`
 
+Server จำกัด input public key ไม่เกิน 256 bytes ก่อน trim แล้วตัด whitespace รอบนอก
+ค่าที่เหลือต้องยาว 44 ตัวอักษรและ decode แบบ strict standard Base64 ได้ 32 bytes
+เก็บเป็น canonical Base64; key ว่าง, Base64 ผิด, padding ผิด, PEM, Base64URL,
+whitespace ภายใน, ขนาดผิด หรือ input ใหญ่เกินกำหนดตอบ 400 ก่อนใช้โควตา
+ไม่รับฟิลด์ `private_key`/`encrypted_private_key` และไม่รับ private key 64 bytes ใน `public_key`
+การตรวจขนาดไม่พิสูจน์การถือ private key หรือความสัมพันธ์กับ key ฝั่ง Agent
+ตัวอย่าง `BASE64_VALUE_FROM_AGENT` และ `room-uuid` เป็น placeholder ต้องแทนด้วยค่าจริง
+
 การเพิ่ม `used_count` และการสร้าง Agent ทำใน transaction เดียวกัน ดังนั้น:
 
 - สมัครสำเร็จ: เพิ่ม `used_count` 1 ครั้ง
 - สร้าง Agent ไม่สำเร็จ: quota จะถูก rollback และไม่นับการใช้
 - สมัครพร้อมกันหลายเครื่อง: ระบบล็อกการใช้ token ทำให้ไม่ใช้เกิน `max_use`
 - MAC address ซ้ำ: ได้ `409`
+- Agent ID ซ้ำ: ได้ `409` โดยไม่แทนที่ public key เดิม
 - ข้อมูล Agent ไม่ถูกต้อง: ได้ `400`
 - token ไม่ถูกต้อง หมดอายุ ถูก revoke หรือใช้ครบ: ได้ `403`
 
@@ -216,7 +229,7 @@ Response สำเร็จ:
 
 ## การ Migration ฐานข้อมูลเดิม
 
-สำหรับฐานข้อมูลเดิม ให้หยุด server ก่อน แล้วรัน [20260913_agent_enrollment_tokens.sql](../migrations/20260913_agent_enrollment_tokens.sql)
+สำหรับฐานข้อมูลเดิม ให้ตรวจว่าเคย apply แล้วหรือยัง หยุด server ก่อนรัน [20260913_agent_enrollment_tokens.sql](../migrations/20260913_agent_enrollment_tokens.sql)
 
 Migration นี้จะ:
 
@@ -230,4 +243,8 @@ Migration นี้จะ:
 
 ไม่สามารถกู้คืน token plaintext เดิมได้ หลัง migration ต้องสร้าง token ใหม่ หากมี Agent เดิมที่ใช้ MAC ซ้ำกัน ต้องแก้ไขข้อมูลก่อน เพราะ migration จะ rollback และไม่ลบ Agent อัตโนมัติ
 
-ฐานข้อมูลใหม่ให้ใช้ `schema.sql` เวอร์ชันล่าสุด ส่วน Role อื่นนอกจาก `ADMINISTRATOR` ต้องได้รับสิทธิ์ `tokens.manage` ผ่าน Role management API
+Local repository ปัจจุบันไม่มี production `schema.sql` bootstrap ให้ขอ schema-only baseline
+ที่ตรงกับระบบจากผู้ดูแลฐานข้อมูล และตรวจ migrations ที่ apply แล้วก่อนรัน
+อย่ารัน `migrate-register.sql` ซ้ำหากมี `agents.public_key` แล้ว
+`service/testdata/enrollment_schema.sql` ใช้เฉพาะ integration tests ไม่ใช่ production schema
+Role อื่นนอกจาก `ADMINISTRATOR` ต้องได้รับสิทธิ์ `tokens.manage` ผ่าน Role management API

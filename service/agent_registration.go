@@ -36,11 +36,11 @@ func RegisterAgent(db *sql.DB) fiber.Handler {
 		if in.AgentID == nil || strings.TrimSpace(*in.AgentID) == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "agent_id is required"})
 		}
-		if strings.TrimSpace(in.PublicKey) == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "public_key is required"})
+		publicKey, err := canonicalAgentPublicKey(in.PublicKey)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 		agentID := strings.TrimSpace(*in.AgentID)
-		publicKey := in.PublicKey
 		if _, err := uuid.Parse(agentID); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "agent_id must be a valid UUID"})
 		}
