@@ -3,7 +3,7 @@
 ## ข้อมูลทั่วไป
 
 - Base URL: `http://localhost:8080`
-- ทุก endpoint ต้อง Login และส่ง session cookie ชื่อ `__Host-session`
+- Endpoint จัดการ Agent ต้อง Login และส่ง session cookie ชื่อ `__Host-session`; `/register` และ `/:id/exists` เป็นข้อยกเว้นด้านล่าง
 - บัญชีผู้เรียกต้องมีสถานะ `ACTIVE`
 - Request body ใช้ `Content-Type: application/json`
 - Agent ID และ `room_id` ใช้ UUID
@@ -17,6 +17,7 @@
 | `GET /api/agents/` | `agents.read` หรือ `agents.manage` |
 | `GET /api/agents/:id` | `agents.read` หรือ `agents.manage` |
 | `GET /api/agents/:id/exists` | ไม่ต้องใช้ session หรือ permission |
+| `POST /api/agents/register` | enrollment token; ไม่ต้องใช้ user session |
 | `POST /api/agents/` | `agents.manage` |
 | `PUT /api/agents/:id` | `agents.edit` หรือ `agents.manage` |
 | `DELETE /api/agents/:id` | `agents.delete` หรือ `agents.manage` |
@@ -27,7 +28,7 @@
 
 | ฟิลด์ | ชนิด | รายละเอียด |
 | --- | --- | --- |
-| `id` | UUID | รหัส Agent สร้างโดยระบบ |
+| `id` | UUID | Enrollment ใช้ `agent_id` ที่ Agent สร้างและเก็บถาวร; API สร้าง record โดยผู้ดูแลให้ฐานข้อมูลสร้าง ID |
 | `room_id` | UUID หรือ null | ห้องที่ Agent สังกัด ต้องเป็นห้องที่มีอยู่จริง |
 | `hostname` | string | บังคับ ไม่เกิน 255 ตัวอักษร |
 | `os_info` | JSON หรือ null | ข้อมูลระบบปฏิบัติการแบบ JSON |
@@ -52,7 +53,7 @@ curl -i -c cookies.txt \
 
 ## การกำหนด Permission ให้ Role
 
-Permission ทั้งสี่รายการอยู่ใน `schema.sql` และ `seed.sql` แล้ว สำหรับฐานข้อมูลเดิมให้รันคำสั่ง SQL ต่อไปนี้ หรือสร้างผ่าน Permissions API:
+สำหรับฐานข้อมูลเดิม ให้ตรวจสอบ Permission ที่มีอยู่แล้ว และเพิ่มรายการที่ขาดด้วย SQL ต่อไปนี้ หรือผ่าน Permissions API:
 
 ```sql
 INSERT INTO permissions (code, description)
@@ -156,7 +157,17 @@ curl -i -b cookies.txt \
   http://localhost:8080/api/agents/11111111-1111-1111-1111-111111111111/exists
 ```
 
-เส้นนี้ไม่ต้อง Login และไม่ต้องใช้ permission ใด ๆ ถ้าพบ Agent จะตอบ `204 No Content` โดยไม่มี response body หากไม่พบจะตอบ `404 Not Found` โดยไม่มี response body
+เส้นนี้ไม่ต้อง Login และไม่ต้องใช้ permission ใด ๆ ถ้าพบ Agent จะตอบ `204 No Content` โดยไม่มี response body หากไม่พบจะตอบ `404 Not Found`
+
+`/exists` บอกเพียงว่ามี record ตาม ID ไม่พิสูจน์ว่าผู้เรียกถือ private key
+ไม่เปรียบเทียบ public key และไม่ให้สิทธิ์ WebSocket; อย่าใช้เป็น authentication
+รูปแบบ UUID ผิดตอบ 400; ฐานข้อมูลผิดพลาดตอบ 500
+
+Enrollment ต้องส่ง `token`, `agent_id`, `public_key`, `hostname` และ `mac_address`
+โดย public key ต้องเป็น standard padded Base64 ของ Ed25519 ขนาด 32 bytes
+ดู validation, canonical storage และ transaction quota ที่ [TOKENS_API_DOCS.md](TOKENS_API_DOCS.md)
+API จัดการ record โดยผู้ดูแล `POST /api/agents/` ไม่ใช่ enrollment และไม่ได้ตั้ง public key;
+record เดิมที่ไม่มีหรือมี key ผิดรูปแบบต้องตรวจสอบก่อน Phase 4 โดยห้ามสร้าง key ทับอัตโนมัติ
 
 ## 4. สร้าง Agent
 
@@ -261,6 +272,7 @@ curl -i -b cookies.txt \
 | `GET` | `/api/agents/` | `200 OK` |
 | `GET` | `/api/agents/:id` | `200 OK` |
 | `GET` | `/api/agents/:id/exists` | `204 No Content` |
+| `POST` | `/api/agents/register` | `201 Created` |
 | `POST` | `/api/agents/` | `201 Created` |
 | `PUT` | `/api/agents/:id` | `200 OK` |
 | `DELETE` | `/api/agents/:id` | `204 No Content` |

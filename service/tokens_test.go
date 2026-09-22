@@ -1,7 +1,10 @@
 package service
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -94,12 +97,27 @@ func enrollmentTestDatabase(t *testing.T) *sql.DB {
 
 func TestEnrollmentWorkflowPostgres(t *testing.T) {
 	db := enrollmentTestDatabase(t)
-	schema, err := os.ReadFile("../schema.sql")
+	schema, err := os.ReadFile("testdata/enrollment_schema.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(string(schema)); err != nil {
 		t.Fatal(err)
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(public)
+	enrollmentBody := func(secret, hostname, mac string, room *string) string {
+		body, err := json.Marshal(map[string]interface{}{
+			"token": secret, "agent_id": uuid.NewString(), "public_key": " \t" + publicKey + "\n",
+			"hostname": hostname, "mac_address": mac, "room_id": room,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
 	}
 	var role, user string
 	if err := db.QueryRow(`INSERT INTO roles(name) VALUES('ENROLLMENT_MANAGER') RETURNING id`).Scan(&role); err != nil {
@@ -172,7 +190,7 @@ func TestEnrollmentWorkflowPostgres(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			body := fmt.Sprintf(`{"token":%q,"hostname":"pc-%d","mac_address":"aa:bb:cc:dd:ee:%02x"}`, secret, i, i)
+			body := enrollmentBody(secret, fmt.Sprintf("pc-%d", i), fmt.Sprintf("aa:bb:cc:dd:ee:%02x", i), nil)
 			req := httptest.NewRequest("POST", "/api/agents/register", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			res, err := app.Test(req, 10000)
@@ -199,6 +217,10 @@ func TestEnrollmentWorkflowPostgres(t *testing.T) {
 	if successes != 3 {
 		t.Fatalf("successful enrollments=%d", successes)
 	}
+	var keyCount int
+	if err := db.QueryRow(`SELECT count(*) FROM agents WHERE public_key=$1 AND status='OFFLINE'`, publicKey).Scan(&keyCount); err != nil || keyCount != 3 {
+		t.Fatalf("canonical registered keys=%d err=%v", keyCount, err)
+	}
 	if err := db.QueryRow(`SELECT used_count FROM tokens WHERE id=$1`, id).Scan(&used); err != nil || used != 3 {
 		t.Fatalf("usage=%d err=%v", used, err)
 	}
@@ -211,8 +233,18 @@ func TestEnrollmentWorkflowPostgres(t *testing.T) {
 	if status, _ := request("PATCH", "/api/tokens/"+id, `{"max_use":null}`, true); status != 200 {
 		t.Fatalf("clear quota status=%d", status)
 	}
+	for _, invalidKey := range []string{"", "invalid-base64", base64.StdEncoding.EncodeToString(make([]byte, 64))} {
+		body, _ := json.Marshal(map[string]string{
+			"token": secret, "agent_id": uuid.NewString(), "hostname": "bad-key",
+			"mac_address": "ff:ee:dd:cc:bb:aa", "public_key": invalidKey,
+		})
+		if status, _ := request("POST", "/api/agents/register", string(body), false); status != 400 {
+			t.Fatalf("invalid key status=%d", status)
+		}
+	}
 	// Invalid room rolls back both the new agent and the consumed quota.
-	status, _ = request("POST", "/api/agents/register", fmt.Sprintf(`{"token":%q,"hostname":"bad-room","mac_address":"ff:ee:dd:cc:bb:aa","room_id":%q}`, secret, uuid.NewString()), false)
+	missingRoom := uuid.NewString()
+	status, _ = request("POST", "/api/agents/register", enrollmentBody(secret, "bad-room", "ff:ee:dd:cc:bb:aa", &missingRoom), false)
 	if status != 400 {
 		t.Fatalf("bad room status=%d", status)
 	}
@@ -220,9 +252,28 @@ func TestEnrollmentWorkflowPostgres(t *testing.T) {
 	if err := db.QueryRow(`SELECT mac_address FROM agents LIMIT 1`).Scan(&mac); err != nil {
 		t.Fatal(err)
 	}
-	status, _ = request("POST", "/api/agents/register", fmt.Sprintf(`{"token":%q,"hostname":"duplicate","mac_address":%q}`, secret, strings.ToUpper(mac)), false)
+	status, _ = request("POST", "/api/agents/register", enrollmentBody(secret, "duplicate", strings.ToUpper(mac), nil), false)
 	if status != 409 {
 		t.Fatalf("duplicate status=%d", status)
+	}
+	var existingID string
+	if err := db.QueryRow(`SELECT id FROM agents LIMIT 1`).Scan(&existingID); err != nil {
+		t.Fatal(err)
+	}
+	otherPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateIDBody, _ := json.Marshal(map[string]string{
+		"token": secret, "agent_id": existingID, "hostname": "duplicate-id",
+		"mac_address": "ff:ee:dd:cc:bb:aa", "public_key": base64.StdEncoding.EncodeToString(otherPublic),
+	})
+	if status, _ := request("POST", "/api/agents/register", string(duplicateIDBody), false); status != 409 {
+		t.Fatalf("duplicate ID status=%d", status)
+	}
+	var originalKey string
+	if err := db.QueryRow(`SELECT public_key FROM agents WHERE id=$1`, existingID).Scan(&originalKey); err != nil || originalKey != publicKey {
+		t.Fatal("duplicate registration changed existing key")
 	}
 	if err := db.QueryRow(`SELECT used_count FROM tokens WHERE id=$1`, id).Scan(&used); err != nil || used != 3 {
 		t.Fatalf("failed enrollment consumed quota: %d %v", used, err)
@@ -241,6 +292,22 @@ func TestEnrollmentWorkflowPostgres(t *testing.T) {
 	}
 	if status, _ := request("POST", "/api/tokens/validate", fmt.Sprintf(`{"token":%q}`, secret), false); status != 403 {
 		t.Fatalf("revoked validation status=%d", status)
+	}
+	if status, _ := request("POST", "/api/agents/register", enrollmentBody(secret, "revoked", "ff:ee:dd:cc:bb:aa", nil), false); status != 403 {
+		t.Fatalf("revoked enrollment status=%d", status)
+	}
+	status, expired := request("POST", "/api/tokens", `{"max_use":1}`, true)
+	if status != 201 {
+		t.Fatalf("create expiring token status=%d", status)
+	}
+	if _, err := db.Exec(`UPDATE tokens SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1`, expired["id"]); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := request("POST", "/api/agents/register", enrollmentBody(expired["token"].(string), "expired", "ff:ee:dd:cc:bb:aa", nil), false); status != 403 {
+		t.Fatalf("expired enrollment status=%d", status)
+	}
+	if err := db.QueryRow(`SELECT used_count FROM tokens WHERE id=$1`, expired["id"]).Scan(&used); err != nil || used != 0 {
+		t.Fatalf("expired token consumed quota: %d %v", used, err)
 	}
 	var revoked bool
 	if err := db.QueryRow(`SELECT is_revoked FROM tokens WHERE id=$1`, id).Scan(&revoked); err != nil || !revoked {

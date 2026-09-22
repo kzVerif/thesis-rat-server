@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"rat-server/service"
 	"strings"
 
@@ -12,6 +13,9 @@ import (
 
 func main() {
 	if err := loadDotEnv(".env"); err != nil {
+		log.Fatal(err)
+	}
+	if err := validateTransportConfig(); err != nil {
 		log.Fatal(err)
 	}
 	app := fiber.New()
@@ -35,7 +39,7 @@ func main() {
 	app.Use("/api", service.AuditRequests(db))
 	// First enrollment authenticates with a token before session middleware.
 	app.Post("/api/agents/register", service.RegisterAgent(db))
-	// Public probe used by agents to check whether their ID is enrolled.
+	// Public record-existence probe only; it does not prove private-key ownership.
 	app.Get("/api/agents/:id/exists", service.AgentExists(db))
 	app.Post("/api/tokens/validate", service.ValidateToken(db))
 	auth := app.Group("/api/auth")
@@ -116,7 +120,7 @@ func main() {
 	distributions.Get("/", service.ListFileDistributions(db))
 	distributions.Get("/:jobId", service.GetFileDistribution(db))
 
-	listenAddress := envOrDefault("SERVER_HOST", "0.0.0.0") + ":" + envOrDefault("SERVER_PORT", "8080")
+	listenAddress := net.JoinHostPort(envOrDefault("SERVER_HOST", "0.0.0.0"), envOrDefault("SERVER_PORT", "8080"))
 	if err := app.Listen(listenAddress); err != nil {
 		log.Fatal(err)
 	}

@@ -4,33 +4,44 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 var db *sql.DB
 
-func SetupDatabase() *sql.DB {
-	connectionString := envOrDefault("DATABASE_URL", "")
-	if connectionString == "" {
-		connectionString = fmt.Sprintf(
-			"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-			envOrDefault("DB_HOST", "localhost"),
-			envOrDefault("DB_PORT", "5432"),
-			envOrDefault("DB_USER", "postgres"),
-			envOrDefault("DB_PASSWORD", "102247"),
-			envOrDefault("DB_NAME", "ratsystem"),
-			envOrDefault("DB_SSLMODE", "disable"),
-		)
+// Retain this server's .env-only configuration policy; never supply a password.
+func databaseConnectionString() (string, error) {
+	if value := strings.TrimSpace(envOrDefault("DATABASE_URL", "")); value != "" {
+		return value, nil
 	}
+	password := envOrDefault("DB_PASSWORD", "")
+	if strings.TrimSpace(password) == "" {
+		return "", fmt.Errorf("configure DATABASE_URL or DB_PASSWORD in .env")
+	}
+	// Quote lib/pq values so spaces, quotes and backslashes remain literal.
+	quote := func(value string) string {
+		return "'" + strings.NewReplacer("\\", "\\\\", "'", "\\'").Replace(value) + "'"
+	}
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		quote(envOrDefault("DB_HOST", "localhost")),
+		quote(envOrDefault("DB_PORT", "5432")),
+		quote(envOrDefault("DB_USER", "postgres")),
+		quote(password),
+		quote(envOrDefault("DB_NAME", "ratsystem")),
+		quote(envOrDefault("DB_SSLMODE", "disable"))), nil
+}
 
-	var err error
-	db, err = sql.Open("postgres", connectionString)
+func SetupDatabase() *sql.DB {
+	connectionString, err := databaseConnectionString()
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	if err = db.Ping(); err != nil {
-		log.Fatal(err)
+	db, err = sql.Open("postgres", connectionString)
+	if err != nil {
+		log.Fatal("database configuration is invalid; check .env")
 	}
-
+	if err = db.Ping(); err != nil {
+		log.Fatal("database connection failed; check configuration and database availability")
+	}
 	return db
 }
