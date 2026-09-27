@@ -15,16 +15,15 @@ import (
 const AVReadPermission = "av.read"
 
 const avScanSelect = `SELECT id,agent_id,command_id,job_id,scan_type,started_at,finished_at,
-	total_files_scanned,threats_found,threat_details,status,created_at FROM av_scan_results`
+	threat_details,status,created_at FROM av_scan_results`
 
 func scanAVResult(scanner interface{ Scan(...interface{}) error }) (fiber.Map, error) {
 	var id, agentID, commandID, jobID, scanType, status string
 	var started, finished sql.NullTime
-	var totalFiles, threats int64
 	var details []byte
 	var created time.Time
 	if err := scanner.Scan(&id, &agentID, &commandID, &jobID, &scanType, &started, &finished,
-		&totalFiles, &threats, &details, &status, &created); err != nil {
+		&details, &status, &created); err != nil {
 		return nil, err
 	}
 	var threatDetails interface{}
@@ -36,8 +35,8 @@ func scanAVResult(scanner interface{ Scan(...interface{}) error }) (fiber.Map, e
 	return fiber.Map{
 		"id": id, "agent_id": agentID, "command_id": commandID, "job_id": jobID,
 		"scan_type": scanType, "started_at": nullableTime(started), "finished_at": nullableTime(finished),
-		"total_files_scanned": totalFiles, "threats_found": threats, "threat_details": threatDetails,
-		"status": status, "created_at": created,
+		"threat_details": threatDetails,
+		"status":         status, "created_at": created,
 	}, nil
 }
 

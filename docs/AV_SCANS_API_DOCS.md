@@ -38,7 +38,7 @@ an empty array while preserving the matching total. Offset pagination may shift
 between requests when results are inserted or deleted.
 
 Each result includes `id`, `agent_id`, `command_id`, `job_id`, `scan_type`,
-`started_at`, `finished_at`, `total_files_scanned`, `threats_found`,
+`started_at`, `finished_at`,
 `threat_details`, `status`, and `created_at`. Nullable times and threat details
 are returned as JSON `null`; populated threat details are JSON, not a string.
 

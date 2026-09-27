@@ -44,8 +44,7 @@ GET /api/dashboard/
   "antivirus": {
     "total_scans": 18,
     "completed": 15,
-    "failed": 2,
-    "threats_found": 3
+    "failed": 2
   },
   "file_distributions": {
     "total": 12,
@@ -69,7 +68,7 @@ GET /api/dashboard/
 - `tokens.exhausted`: token ที่ใช้ครบ `max_use`
 - `tokens.uses`: จำนวนการลงทะเบียน Agent สำเร็จสะสมจาก `used_count`
 - `files.total_bytes`: ขนาดไฟล์รวมเป็น bytes
-- `antivirus`: จำนวนผลสแกนและจำนวนภัยคุกคามที่พบ
+- `antivirus`: จำนวนผลสแกนทั้งหมด (`total_scans`) และจำนวนที่สำเร็จ (`completed`) หรือล้มเหลว (`failed`)
 - `file_distributions`: จำนวนงานกระจายไฟล์แยกตามสถานะ
 - `activity.last_24_hours`: จำนวน audit logs ที่สร้างใน 24 ชั่วโมงล่าสุด
 

@@ -1,8 +1,7 @@
 BEGIN;
 
 INSERT INTO permissions(code, description)
-VALUES ('agent.manage', 'จัดการเอเจนต์ทั้งหมด: สร้าง อ่าน แก้ไข และลบ'),
-       ('rooms.read', 'ดูรายการและรายละเอียดห้อง')
+VALUES('rooms.read', 'ดูรายการและรายละเอียดห้อง')
 ON CONFLICT (code) DO NOTHING;
 
 -- Consolidate every legacy CRUD grant into the new full CRUD permission.
@@ -31,4 +30,6 @@ WHERE permission_id IN (
 DELETE FROM permissions
 WHERE code IN ('agents.manage', 'agents.read', 'agents.edit', 'agents.delete');
 
+ALTER TABLE av_scan_results DROP COLUMN total_files_scanned;
+ALTER TABLE av_scan_results DROP COLUMN threats_found;
 COMMIT;

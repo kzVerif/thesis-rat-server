@@ -17,7 +17,7 @@ func GetDashboard(db *sql.DB) fiber.Handler {
 			RoomsTotal, UsersTotal, UsersActive, UsersDisabled, UsersLocked                                              int64
 			TokensTotal, TokensActive, TokensRevoked, TokensExpired, TokensExhausted, TokenUses                          int64
 			FilesTotal, FilesBytes                                                                                       int64
-			ScansTotal, ScansCompleted, ScansFailed, ThreatsFound                                                        int64
+			ScansTotal, ScansCompleted, ScansFailed                                                                      int64
 			DistributionsTotal, DistributionsPending, DistributionsProgress, DistributionsCompleted, DistributionsFailed int64
 			Activity24h                                                                                                  int64
 		}
@@ -44,7 +44,6 @@ func GetDashboard(db *sql.DB) fiber.Handler {
 			(SELECT COUNT(*) FROM av_scan_results),
 			(SELECT COUNT(*) FROM av_scan_results WHERE status='COMPLETED'),
 			(SELECT COUNT(*) FROM av_scan_results WHERE status='FAILED'),
-			(SELECT COALESCE(SUM(threats_found),0) FROM av_scan_results),
 			(SELECT COUNT(*) FROM file_distribution_jobs),
 			(SELECT COUNT(*) FROM file_distribution_jobs WHERE status IN ('PENDING','DISPATCHING')),
 			(SELECT COUNT(*) FROM file_distribution_jobs WHERE status IN ('IN_PROGRESS','PARTIAL_FAILED')),
@@ -56,7 +55,7 @@ func GetDashboard(db *sql.DB) fiber.Handler {
 			&out.RoomsTotal, &out.UsersTotal, &out.UsersActive, &out.UsersDisabled, &out.UsersLocked,
 			&out.TokensTotal, &out.TokensActive, &out.TokensRevoked, &out.TokensExpired, &out.TokensExhausted, &out.TokenUses,
 			&out.FilesTotal, &out.FilesBytes,
-			&out.ScansTotal, &out.ScansCompleted, &out.ScansFailed, &out.ThreatsFound,
+			&out.ScansTotal, &out.ScansCompleted, &out.ScansFailed,
 			&out.DistributionsTotal, &out.DistributionsPending, &out.DistributionsProgress,
 			&out.DistributionsCompleted, &out.DistributionsFailed, &out.Activity24h)
 		if err != nil {
@@ -69,7 +68,7 @@ func GetDashboard(db *sql.DB) fiber.Handler {
 			"users":              fiber.Map{"total": out.UsersTotal, "active": out.UsersActive, "disabled": out.UsersDisabled, "locked": out.UsersLocked},
 			"tokens":             fiber.Map{"total": out.TokensTotal, "active": out.TokensActive, "revoked": out.TokensRevoked, "expired": out.TokensExpired, "exhausted": out.TokensExhausted, "uses": out.TokenUses},
 			"files":              fiber.Map{"total": out.FilesTotal, "total_bytes": out.FilesBytes},
-			"antivirus":          fiber.Map{"total_scans": out.ScansTotal, "completed": out.ScansCompleted, "failed": out.ScansFailed, "threats_found": out.ThreatsFound},
+			"antivirus":          fiber.Map{"total_scans": out.ScansTotal, "completed": out.ScansCompleted, "failed": out.ScansFailed},
 			"file_distributions": fiber.Map{"total": out.DistributionsTotal, "pending": out.DistributionsPending, "in_progress": out.DistributionsProgress, "completed": out.DistributionsCompleted, "failed": out.DistributionsFailed},
 			"activity":           fiber.Map{"last_24_hours": out.Activity24h},
 		})
