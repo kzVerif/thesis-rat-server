@@ -5,7 +5,8 @@
 - Base URL: `http://localhost:8080`
 - Request body ใช้ `Content-Type: application/json`
 - ทุก endpoint ต้องเข้าสู่ระบบและส่ง session cookie ชื่อ `__Host-session`
-- Role ของผู้ใช้ต้องมี Permission รหัส `rooms.manage`
+- การอ่านข้อมูล (`GET`) ต้องมี `rooms.read` หรือ `rooms.manage`
+- การเพิ่ม/แก้ไข/ลบ (`POST`, `PUT`, `DELETE`) ต้องมี `rooms.manage`
 - ID ของห้องต้องเป็น UUID
 
 ข้อมูลห้องประกอบด้วย:
@@ -49,6 +50,11 @@ curl -i -c cookies.txt \
 > Cookie กำหนดเป็น `Secure` สำหรับการใช้งานจริงผ่าน HTTPS หากทดสอบในสภาพแวดล้อม HTTPS ที่ใช้ certificate ภายใน สามารถเพิ่ม `-k` ให้ `curl` ได้
 
 ## การกำหนด Permission ให้ Role
+
+รัน `migrations/20260927_rooms_read.sql` เพื่อเพิ่ม Permission `rooms.read` (รันซ้ำได้)
+จากนั้นนำ ID ของ `rooms.read` ไปเพิ่มใน `permission_ids` ของ Role ที่ต้องการให้อ่านข้อมูลห้องได้
+Migration ไม่ได้มอบสิทธิ์ให้ Role ใดอัตโนมัติ ผู้ที่มี `rooms.manage` เดิมยังอ่านและจัดการห้องได้ครบ
+หน้า Frontend ที่ต้องเลือกห้องสามารถใช้ GET endpoints เดิมได้เมื่อ Role มี `rooms.read`
 
 Permission `rooms.manage` ถูกเพิ่มไว้ใน `schema.sql` สำหรับฐานข้อมูลใหม่แล้ว สำหรับฐานข้อมูลเดิมสามารถสร้างผ่าน Permission API:
 
@@ -221,7 +227,7 @@ Response สำเร็จ: HTTP `204 No Content` และไม่มี resp
 | --- | --- | --- |
 | `400 Bad Request` | UUID หรือ request body ไม่ถูกต้อง, ไม่ระบุชื่อ หรือชื่อยาวเกินกำหนด | `{"error":"รูปแบบข้อมูลไม่ถูกต้อง"}` |
 | `401 Unauthorized` | ยังไม่ได้ Login, cookie ไม่มี หรือ session หมดอายุ | `{"error":"ไม่ได้รับอนุญาตให้เข้าใช้งาน"}` |
-| `403 Forbidden` | Role ไม่มี Permission `rooms.manage` | `{"error":"ไม่มีสิทธิ์ดำเนินการนี้"}` |
+| `403 Forbidden` | GET: ไม่มีทั้ง `rooms.read` และ `rooms.manage`; POST/PUT/DELETE: ไม่มี `rooms.manage` | `{"error":"ไม่มีสิทธิ์ดำเนินการนี้"}` |
 | `404 Not Found` | ไม่พบห้องตาม ID | `{"error":"ไม่พบห้อง"}` |
 | `409 Conflict` | ชื่อห้องซ้ำ | `{"error":"ชื่อห้องนี้มีอยู่แล้ว"}` |
 | `500 Internal Server Error` | ไม่สามารถอ่านข้อมูล ตรวจสอบสิทธิ์ หรือดำเนินการกับฐานข้อมูลได้ | `{"error":"ไม่สามารถดำเนินการกับฐานข้อมูลได้"}` |
@@ -232,7 +238,7 @@ Response สำเร็จ: HTTP `204 No Content` และไม่มี resp
 
 1. ตรวจสอบ session cookie และสถานะผู้ใช้
 2. อ่าน Role ปัจจุบันของผู้ใช้
-3. ตรวจว่า Role เชื่อมกับ Permission `rooms.manage`
+3. GET: ตรวจว่า Role มี `rooms.read` หรือ `rooms.manage`; POST/PUT/DELETE: ต้องมี `rooms.manage`
 4. เรียก Rooms handler เมื่อผ่านการตรวจสอบทั้งหมด
 
 การเพิ่มหรือถอน Permission ของ Role มีผลกับ request ครั้งถัดไปทันที โดยผู้ใช้ไม่จำเป็นต้อง Login ใหม่

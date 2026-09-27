@@ -15,12 +15,7 @@ import (
 	"github.com/lib/pq"
 )
 
-const (
-	AgentsManagePermission = "agents.manage"
-	AgentsReadPermission   = "agents.read"
-	AgentsEditPermission   = "agents.edit"
-	AgentsDeletePermission = "agents.delete"
-)
+const AgentsManagePermission = "agents.manage"
 
 var macAddressPattern = regexp.MustCompile(`(?i)^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
 

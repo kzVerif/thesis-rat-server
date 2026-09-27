@@ -10,7 +10,10 @@ import (
 	"github.com/lib/pq"
 )
 
-const RoomsManagePermission = "rooms.manage"
+const (
+	RoomsManagePermission = "rooms.manage"
+	RoomsReadPermission   = "rooms.read"
+)
 
 type roomInput struct {
 	Name        string  `json:"name"`

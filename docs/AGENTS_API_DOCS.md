@@ -14,15 +14,19 @@
 
 | Endpoint | Permission ที่ใช้ได้ |
 | --- | --- |
-| `GET /api/agents/` | `agents.read` หรือ `agents.manage` |
-| `GET /api/agents/:id` | `agents.read` หรือ `agents.manage` |
+| `GET /api/agents/` | `agent.manage` |
+| `GET /api/agents/:id` | `agent.manage` |
 | `GET /api/agents/:id/exists` | ไม่ต้องใช้ session หรือ permission |
 | `POST /api/agents/register` | enrollment token; ไม่ต้องใช้ user session |
-| `POST /api/agents/` | `agents.manage` |
-| `PUT /api/agents/:id` | `agents.edit` หรือ `agents.manage` |
-| `DELETE /api/agents/:id` | `agents.delete` หรือ `agents.manage` |
+| `POST /api/agents/` | `agent.manage` |
+| `PUT /api/agents/:id` | `agent.manage` |
+| `DELETE /api/agents/:id` | `agent.manage` |
 
-`agents.manage` เป็นสิทธิ์รวม ใช้ดำเนินการได้ทุก endpoint ส่วนสิทธิ์ย่อยเหมาะสำหรับ Role ที่ต้องการจำกัดหน้าที่เฉพาะด้าน
+`agent.manage` เป็นสิทธิ์เดียวสำหรับ CRUD ของ Agent และเมื่อบันทึก Role ระบบจะเพิ่ม `rooms.read` ให้อัตโนมัติ
+
+ฐานข้อมูลเดิมให้รัน `migrations/20260927_agent_manage.sql` ซึ่งจะย้าย Role ที่มีสิทธิ์ CRUD เดิม
+ไปใช้ `agent.manage` เพิ่ม `rooms.read` และลบ permission CRUD เก่าออก (รันซ้ำได้)
+Role ที่เคยมีเฉพาะสิทธิ์อ่าน แก้ไข หรือลบ จะได้รับ CRUD ครบตามสิทธิ์รวมใหม่
 
 ## โครงสร้างข้อมูล Agent
 
@@ -58,10 +62,7 @@ curl -i -c cookies.txt \
 ```sql
 INSERT INTO permissions (code, description)
 VALUES
-  ('agents.manage', 'จัดการเครื่องลูกทั้งหมด'),
-  ('agents.read', 'ดูรายชื่อและข้อมูลเครื่องลูก'),
-  ('agents.edit', 'แก้ไขข้อมูลเครื่องลูก'),
-  ('agents.delete', 'ลบเครื่องลูก')
+  ('agent.manage', 'จัดการเอเจนต์ทั้งหมด: สร้าง อ่าน แก้ไข และลบ')
 ON CONFLICT (code) DO NOTHING;
 ```
 
@@ -247,7 +248,7 @@ curl -i -b cookies.txt \
 
 สำเร็จจะตอบ `204 No Content` โดยไม่มี response body
 
-> การลบ Agent จะลบ `commands` ของ Agent นั้นตาม Foreign Key `ON DELETE CASCADE` ด้วย จึงควรให้ `agents.delete` เฉพาะ Role ที่เชื่อถือได้
+> การลบ Agent จะลบ `commands` ของ Agent นั้นตาม Foreign Key `ON DELETE CASCADE` ด้วย ผู้ที่มี `agent.manage` สามารถลบ Agent ได้
 
 ## Error responses
 

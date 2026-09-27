@@ -141,6 +141,32 @@ func replacePermissions(tx *sql.Tx, roleID string, ids []string) error {
 	return nil
 }
 
+// ensureRoomReadPermission applies dependencies to the role's saved permissions.
+// Run inside the role transaction, including updates that omit permission_ids.
+func ensureRoomReadPermission(tx *sql.Tx, roleID string) error {
+	var required bool
+	if err := tx.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM role_permissions rp
+		JOIN permissions p ON p.id=rp.permission_id
+		WHERE rp.role_id=$1 AND (
+			p.code=$2 OR p.code LIKE 'monitor%' OR p.code LIKE 'files.distribute%'
+		)
+	)`, roleID, AgentsManagePermission).Scan(&required); err != nil {
+		return err
+	}
+	if !required {
+		return nil
+	}
+	if _, err := tx.Exec(`INSERT INTO permissions(code,description) VALUES($1,$2)
+		ON CONFLICT (code) DO NOTHING`, RoomsReadPermission, "ดูรายการและรายละเอียดห้อง"); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO role_permissions(role_id,permission_id)
+		SELECT $1,id FROM permissions WHERE code=$2
+		ON CONFLICT DO NOTHING`, roleID, RoomsReadPermission)
+	return err
+}
+
 func CreateRole(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in roleInput
@@ -164,6 +190,9 @@ func CreateRole(db *sql.DB) fiber.Handler {
 			if err = replacePermissions(tx, id, *in.PermissionIDs); err != nil {
 				return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 			}
+		}
+		if err = ensureRoomReadPermission(tx, id); err != nil {
+			return dbError(c, err, "ไม่สามารถเพิ่มสิทธิ์อ่านห้องได้")
 		}
 		if err = tx.Commit(); err != nil {
 			return dbError(c, err, "บทบาทนี้มีอยู่แล้ว")
@@ -216,6 +245,9 @@ func UpdateRole(db *sql.DB) fiber.Handler {
 			if err = replacePermissions(tx, id, *in.PermissionIDs); err != nil {
 				return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 			}
+		}
+		if err = ensureRoomReadPermission(tx, id); err != nil {
+			return dbError(c, err, "ไม่สามารถเพิ่มสิทธิ์อ่านห้องได้")
 		}
 		if err = tx.Commit(); err != nil {
 			return dbError(c, err, "บทบาทนี้มีอยู่แล้ว")

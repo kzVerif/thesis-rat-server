@@ -180,6 +180,9 @@ Request body:
 - ส่ง permission_ids เป็น [] เพื่อสร้าง Role ที่ยังไม่มี Permission ได้
 - หากไม่ส่ง permission_ids ระบบจะสร้าง Role โดยไม่เพิ่มความสัมพันธ์กับ Permission
 
+เมื่อบันทึก Role หากมี permission code `agent.manage` หรือขึ้นต้นด้วย `monitor` หรือ `files.distribute`
+ระบบจะเพิ่ม `rooms.read` ให้โดยอัตโนมัติ หากยังไม่มี permission นี้จะสร้างให้ใน transaction เดียวกัน
+
 ตัวอย่าง request:
 
 curl -i -b cookies.txt \
@@ -231,6 +234,10 @@ Request body:
 - หากส่ง permission_ids ระบบจะแทนที่ Permission เดิมทั้งหมดด้วยรายการใหม่
 - หากส่ง permission_ids เป็น [] ระบบจะนำ Permission ทั้งหมดออกจาก Role
 - หากไม่ส่ง permission_ids ระบบจะคง Permission เดิมไว้
+
+ทั้งกรณีส่งและไม่ส่ง `permission_ids` ระบบจะตรวจสิทธิ์หลังแก้ไข หากมี code `agent.manage`
+หรือขึ้นต้นด้วย `monitor` หรือ `files.distribute` จะเพิ่ม `rooms.read` อัตโนมัติโดยไม่เพิ่มซ้ำ
+หากส่งรายการว่างจะล้างสิทธิ์ทั้งหมดตามเดิม บทบาทเดิมจะได้รับกฎนี้เมื่อบันทึกครั้งถัดไป
 - name เป็น field บังคับทุกครั้งที่เรียก PUT
 - หากต้องการล้าง description ให้ส่ง "description": null
 
