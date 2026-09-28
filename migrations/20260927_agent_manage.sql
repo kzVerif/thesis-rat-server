@@ -1,7 +1,7 @@
 BEGIN;
 
 INSERT INTO permissions(code, description)
-VALUES('rooms.read', 'ดูรายการและรายละเอียดห้อง')
+VALUES('rooms.read', 'ดูรายการและรายละเอียดห้อง'),('agents.control', 'สั่งปิดเอเจนต์')
 ON CONFLICT (code) DO NOTHING;
 
 -- Consolidate every legacy CRUD grant into the new full CRUD permission.
