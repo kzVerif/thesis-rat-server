@@ -23,6 +23,7 @@ func RegisterAgent(db *sql.DB) fiber.Handler {
 			RoomID     *string         `json:"room_id"`
 			AgentID    *string         `json:"agent_id"`
 			PublicKey  string          `json:"public_key"`
+			IPAddress  string          `json:"ip_address"`
 		}
 		if err := decodeTokenJSON(c.Body(), &in); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
@@ -44,7 +45,10 @@ func RegisterAgent(db *sql.DB) fiber.Handler {
 		if _, err := uuid.Parse(agentID); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "agent_id must be a valid UUID"})
 		}
-		ip := c.IP()
+		ip := strings.TrimSpace(in.IPAddress)
+		if ip == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "ip_address is required"})
+		}
 		agent := agentInput{Hostname: in.Hostname, MACAddress: &in.MACAddress, OSInfo: in.OSInfo, RoomID: in.RoomID, IPAddress: &ip}
 		if err := normalizeAgentInput(&agent); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
