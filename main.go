@@ -6,6 +6,7 @@ import (
 	"net"
 	"rat-server/service"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/lib/pq"
@@ -35,6 +36,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Public liveness/readiness probe; no session, permission, or audit.
+	app.Get("/health", func(c *fiber.Ctx) error {
+		ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unavailable"})
+		}
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
 
 	app.Use("/api", service.AuditRequests(db))
 	// First enrollment authenticates with a token before session middleware.
